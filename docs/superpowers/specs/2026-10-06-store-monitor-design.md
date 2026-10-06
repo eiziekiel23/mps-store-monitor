@@ -143,6 +143,12 @@ The run gate `store.reachable` (an HTTP GET of `/`) runs first. If it fails, all
 3. Build the checkout checks on the spike's outcome.
 4. User creates the public repo, Telegram bot and secrets. Alerts go to a **test chat for 2–3 days** to tune flakiness, then `TELEGRAM_CHAT_ID` switches to the real channel.
 
+### Spike outcome (2026-10-06): **A — headless**
+GitHub-hosted runner (US, IP geolocated to Virginia), headless and xvfb-headed both: checkout reached (`/checkouts/cn/<token>/en-us`, HTTP 200), **no bot challenge**, all extension blocks rendered (timer, entries banner, order protection auto-added at the correct $38.07 tier for a $499 cart, 3 trust-badge images).
+- Express wallets: 4 offered (`data-count="4"`): `#shop-pay-button`, `#PAYPAL_EXPRESS-iframe`, `#amazon_pay-iframe`, `#GOOGLE_PAY-iframe`, inside `#express-checkout-wallets-wrapper`. Match IDs case-insensitively.
+- Amazon Pay is **region-dependent**: a run from the Philippines got only 3 wallets (no Amazon Pay). `checkout.express` therefore expects all 4 only from US vantage points, keyed on the `region` label.
+- Decision: the checkout project runs **headless**; no xvfb needed.
+
 ## 10. Open items resolved during implementation (not design decisions)
 
 - Exact selectors and metaobject field names, read from the Booster Theme source and the live site.
