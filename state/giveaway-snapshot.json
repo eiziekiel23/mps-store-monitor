@@ -1,0 +1,28 @@
+{
+  "fields": {
+    "bonus_entries_amount": "5000",
+    "bonus_entries_in_copy_on_theme": "false",
+    "custom_block_text": "Today's Flash Giveaways and",
+    "end_date": "November 2, 2026 02:00:00",
+    "flash_giveaway_desktop_banner": "https://cdn.shopify.com/s/files/1/0640/9381/5021/files/DESKTOP_-_Oct_7_2026.webp?v=1791356330",
+    "flash_giveaway_end_date": "October 8, 2026 02:00:00",
+    "flash_giveaway_mobile_banner": "https://cdn.shopify.com/s/files/1/0640/9381/5021/files/MOBILE_-_Oct_7_2026.webp?v=1791356330",
+    "flash_giveaway_start_date": "November 24, 2025 00:00:01",
+    "flash_giveaway_timer_copy": "GIVEAWAYS END IN:",
+    "giveaway_timer_copy": "GIVEAWAY ENDS IN:",
+    "has_overlapping_giveaway": "false",
+    "mps_announcement_bar_texts": "[\"Today’s Deal: $20 Discount + FREE Golden Ticket to WIN $60,000! Code: J20\",\"BBG26 Winner: Djamie Estacio of Santa Rosa, California! She chose $60,000 cash!\"]",
+    "mps_homepage_announcement_bar_texts": "[\"Today’s Deal: $20 Discount + FREE Golden Ticket to WIN $60,000! Code: J20\",\"BBG26 Winner: Djamie Estacio of Santa Rosa, California! She chose $60,000 cash!\"]",
+    "number": "27",
+    "pdp_images": "[\"gid://shopify/MediaImage/46104661623021\",\"gid://shopify/MediaImage/46104661655789\"]",
+    "prize_text": "BBG27: $60,000 or 1999 Pokémon Box +$10k",
+    "show_timer_progress_bar": "false",
+    "start_date": "September 25, 2026 00:00:01",
+    "video_thumbnail": "https://cdn.shopify.com/s/files/1/0640/9381/5021/files/tn_how_to_enter_-_BBG12_-_June_6_2025_copy_2.webp?v=1749155256",
+    "video_url": "https://cdn.shopify.com/videos/c/o/v/fb817b0f3da742ceb9a595313d78518e.mp4",
+    "vip_order_protection_multiplier": "25"
+  },
+  "lastRotationMs": 1791361039061,
+  "updatedAt": "2026-10-07T08:17:19.061Z",
+  "entries": []
+}
