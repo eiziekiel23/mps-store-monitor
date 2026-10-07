@@ -31,8 +31,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: state/
-          key: incident-state-v1
-          restore-keys: incident-state-v1
+          # Rolling key: each run writes a NEW entry; restore-keys picks the
+          # most recent prior entry. Without a unique primary key the save step
+          # silently skips ("Cache hit on primary key, not saving") so state
+          # accumulates only the very first snapshot and never updates.
+          key: incident-state-v1-${{ github.run_id }}
+          restore-keys: incident-state-v1-
 
       - name: Run monitoring tests
         env:
@@ -52,4 +56,4 @@ jobs:
         uses: actions/cache@v4
         with:
           path: state/
-          key: incident-state-v1
+          key: incident-state-v1-${{ github.run_id }}

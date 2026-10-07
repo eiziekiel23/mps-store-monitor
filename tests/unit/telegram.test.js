@@ -1,6 +1,57 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatRunMessage, sendTelegram } from '../../src/alerting/telegram.js';
+import { formatRunMessage, formatStatusMessage, sendTelegram } from '../../src/alerting/telegram.js';
+
+describe('alerting/telegram - formatStatusMessage', () => {
+  const traceId = 'b'.repeat(32);
+
+  test('reports an all-green run with a success header', () => {
+    const checks = [
+      { id: 'store.reachable', status: 'passed' },
+      { id: 'home.sections', status: 'passed' },
+      { id: 'nav.hamburger', status: 'skipped' }
+    ];
+
+    const msg = formatStatusMessage({ checks, traceId });
+
+    assert.ok(msg.includes('✅ *MPS Store Monitor — Manual Run Report*'));
+    assert.ok(msg.includes('2 passed, 0 failed, 1 skipped / 3 total'));
+    assert.ok(msg.includes('✅ All checks passing'));
+    assert.ok(msg.includes(traceId));
+  });
+
+  test('lists each failing check with its error and uses the failure header', () => {
+    const checks = [
+      { id: 'store.reachable', status: 'passed' },
+      { id: 'nav.key_links', status: 'failed', error: 'Test timeout of 30000ms exceeded.' }
+    ];
+
+    const msg = formatStatusMessage({ checks, traceId });
+
+    assert.ok(msg.includes('🔴 *MPS Store Monitor — Manual Run Report*'));
+    assert.ok(msg.includes('1 passed, 1 failed'));
+    assert.ok(msg.includes('🔴 *FAILURES*'));
+    assert.ok(msg.includes('• `nav.key_links`'));
+    assert.ok(msg.includes('_Test timeout of 30000ms exceeded._'));
+    assert.ok(!msg.includes('All checks passing'));
+  });
+
+  test('counts flaky checks separately and links the run URL when provided', () => {
+    const checks = [
+      { id: 'a', status: 'passed' },
+      { id: 'b', status: 'flaky' }
+    ];
+
+    const msg = formatStatusMessage({
+      checks,
+      traceId,
+      runUrl: 'https://github.com/org/repo/actions/runs/123'
+    });
+
+    assert.ok(msg.includes('1 flaky'));
+    assert.ok(msg.includes('(https://github.com/org/repo/actions/runs/123)'));
+  });
+});
 
 describe('alerting/telegram - formatRunMessage', () => {
   const traceId = 'a'.repeat(32);

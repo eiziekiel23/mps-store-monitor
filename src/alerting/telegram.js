@@ -44,6 +44,43 @@ export function formatRunMessage({ events = [], traceId, runUrl, artifactUrl }) 
 }
 
 /**
+ * Formats a full test status report for manual runs, showing all check results.
+ * Used for workflow_dispatch (manual) runs to give visibility into the full state.
+ */
+export function formatStatusMessage({ checks = [], traceId, runUrl }) {
+  const passed = checks.filter(c => c.status === 'passed').length;
+  const flaky = checks.filter(c => c.status === 'flaky').length;
+  const failed = checks.filter(c => c.status === 'failed');
+  const skipped = checks.filter(c => c.status === 'skipped').length;
+
+  const total = checks.length;
+  const statusEmoji = failed.length > 0 ? '🔴' : '✅';
+
+  const lines = [`${statusEmoji} *MPS Store Monitor — Manual Run Report*`];
+  lines.push(`\n${passed} passed${flaky ? `, ${flaky} flaky` : ''}, ${failed.length} failed, ${skipped} skipped / ${total} total`);
+
+  if (failed.length > 0) {
+    lines.push('\n🔴 *FAILURES*');
+    failed.forEach(c => {
+      lines.push(`• \`${c.id}\`\n  _${c.error || 'Unknown error'}_`);
+      if (c.platformNote) {
+        lines.push(`  _(${c.platformNote})_`);
+      }
+    });
+  } else {
+    lines.push('\n✅ All checks passing');
+  }
+
+  if (runUrl) {
+    lines.push(`\n🔎 [Trace ID: \`${traceId}\`](${runUrl})`);
+  } else {
+    lines.push(`\n🔎 Trace ID: \`${traceId}\``);
+  }
+
+  return lines.join('\n');
+}
+
+/**
  * Sends a Markdown-formatted message to a Telegram chat, handling 429
  * rate limits according to the Retry-After header/body.
  */

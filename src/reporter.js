@@ -63,9 +63,11 @@ export default class TelemetryReporter {
 
     const id = this._checkId(test);
 
+    const project = test.parent?.project()?.name || 'unknown';
     this.checks.push({
       id,
       status: normalized,
+      project,
       attempts: result.retry + 1,
       durationMs: result.duration || 0,
       error,
