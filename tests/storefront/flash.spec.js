@@ -20,28 +20,22 @@ test.describe('Storefront Flash Giveaway', () => {
   }, async ({ page }) => {
     await page.goto('/', { waitUntil: 'load' });
 
-    // Validate images
-    const bannerLocators = [
-      page.locator('img[src*="flash_giveaway"]'),
-      page.locator('.flash-giveaway-banner img')
-    ];
+    // The theme renders the giveaway banner as three responsive <img> variants
+    // inside the giveaway section, all carrying a "give-away-*-banner-*" class.
+    const banners = page.locator('img[class*="give-away-"]');
 
-    let foundBanner = false;
-    for (const locator of bannerLocators) {
-      if (await locator.count() > 0) {
-        foundBanner = true;
-        const src = await locator.first().getAttribute('src');
+    const count = await banners.count();
+    expect(count, 'No flash giveaway banner found on homepage').toBeGreaterThan(0);
 
-        // Ensure image loaded (naturalWidth > 0)
-        const isLoaded = await page.evaluate((s) => {
-          const img = document.querySelector(`img[src="${s}"]`);
-          return img && img.naturalWidth > 0;
-        }, src);
+    // Every rendered banner must have a src and must actually decode.
+    // Hidden responsive variants still load because they are marked loading="eager".
+    const broken = await banners.evaluateAll((imgs) =>
+      imgs
+        .filter((img) => !img.currentSrc || img.naturalWidth === 0)
+        .map((img) => img.getAttribute('src') || '(no src)')
+    );
 
-        expect(isLoaded, `Banner image ${src} failed to load`).toBe(true);
-      }
-    }
-
-    expect(foundBanner, 'No flash giveaway banner found on homepage').toBe(true);
+    expect(broken, `Flash giveaway banner images failed to load: ${broken.join(', ')}`)
+      .toHaveLength(0);
   });
 });

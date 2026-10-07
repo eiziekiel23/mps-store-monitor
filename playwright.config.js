@@ -32,6 +32,7 @@ export default defineConfig({
       name: 'mobile',
       use: {
         ...devices['iPhone 14'],
+        browserName: 'chromium',
         userAgent: devices['iPhone 14'].userAgent + ' MPSMonitor/1.0'
       },
     },

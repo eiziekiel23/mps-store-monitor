@@ -35,18 +35,24 @@ test.describe('Storefront Announcement', () => {
     await page.goto('/', { waitUntil: 'domcontentloaded' });
 
     // 3. Extract the rendered text
+    // The announcement bar is a slider: each message is duplicated in the DOM
+    // (2 slides x 2 copies = 4 elements), so the locator must not assume a single
+    // match. We read every rendered message and compare against the expected text.
     const banner = page.locator('#announcement-bar-url-link, .announcement-bar-url-link');
-    await expect(banner).toBeVisible({ timeout: 10000 });
+    await expect(banner.first()).toBeVisible({ timeout: 10000 });
 
-    const textContent = (await banner.textContent())?.trim();
+    const normalize = (str) => String(str).replace(/\s+/g, ' ').trim();
+    const allTexts = (await banner.allTextContents()).map(normalize).filter(Boolean);
 
-    expect(textContent).toBeTruthy();
+    expect(allTexts.length, 'No announcement bar text rendered').toBeGreaterThan(0);
 
-    // 4. Validate exact match if token is available
+    // 4. Validate the expected text appears among the rendered messages if token is available
     if (expectedText) {
-      // Normalize whitespace for comparison
-      const normalize = (str) => String(str).replace(/\s+/g, ' ').trim();
-      expect(normalize(textContent)).toBe(normalize(expectedText));
+      const expected = normalize(expectedText);
+      expect(
+        allTexts.includes(expected),
+        `Expected announcement "${expected}" not found among: ${allTexts.join(' | ')}`
+      ).toBe(true);
     }
   });
 });
