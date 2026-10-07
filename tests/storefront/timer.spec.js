@@ -48,7 +48,21 @@ test.describe('Storefront Countdown Timer', () => {
 
     // Validate against metaobject data
     if (giveawayData?.flash_giveaway_end_date) {
-      const expectedEnd = Number(giveawayData.flash_giveaway_end_date);
+      const parseMetaDate = (v) => {
+        if (v == null) return null;
+        const s = String(v).trim();
+        const n = Number(s);
+        if (String(n) === s && s.length <= 13) return Math.floor(n);
+        const d = new Date(s);
+        if (!isNaN(d.getTime())) return Math.floor(d.getTime() / 1000);
+        return null;
+      };
+
+      const expectedEnd = parseMetaDate(giveawayData.flash_giveaway_end_date);
+      if (expectedEnd == null) {
+        throw new Error(`Invalid flash_giveaway_end_date format from metaobject: '${giveawayData.flash_giveaway_end_date}'`);
+      }
+
       const now = Math.floor(Date.now() / 1000);
       const expectedRemaining = expectedEnd - now;
 
