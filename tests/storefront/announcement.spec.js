@@ -39,7 +39,12 @@ test.describe('Storefront Announcement', () => {
     // (2 slides x 2 copies = 4 elements), so the locator must not assume a single
     // match. We read every rendered message and compare against the expected text.
     const banner = page.locator('#announcement-bar-url-link, .announcement-bar-url-link');
-    await expect(banner.first()).toBeVisible({ timeout: 10000 });
+    // The announcement bar is a slider with multiple slides, only one visible
+    // at a time. Slides are CSS-hidden when not active, so toBeVisible()
+    // would reject the inactive ones. We only care that the element exists in DOM
+    // (toBeAttached) — the .allTextContents() call works on hidden slides too
+    // and will find the correct text regardless of which slide is active.
+    await expect(banner.first()).toBeAttached({ timeout: 10000 });
 
     const normalize = (str) => String(str).replace(/\s+/g, ' ').trim();
     const allTexts = (await banner.allTextContents()).map(normalize).filter(Boolean);

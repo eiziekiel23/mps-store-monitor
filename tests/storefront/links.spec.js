@@ -41,13 +41,24 @@ test.describe('Key Navigation Links', () => {
       }
       // else: fragment-only navigation, response is null by design, OK.
 
-      // For each destination, verify it has at least a visible heading element
-      // (either h1 or h2, common patterns for page structure). For fragments,
-      // this confirms the target section exists and is visible.
-      await expect(
-        page.locator('h1, h2').first(),
-        `No main heading visible on ${expectedPath}`
-      ).toBeVisible();
+      // For fragment-anchor links (e.g. /#mystery-pokemon), verify the target
+      // element exists in the DOM, confirming the section rendered. For full-page
+      // links, the HTTP status check above already validates the page loaded
+      // successfully; no additional content check needed. The store uses different
+      // heading structures across pages (some pages use h1/h2, others use tiles or
+      // images instead), so a page-agnostic check is simpler than trying to
+      // verify content structure that varies across pages.
+      if (href.includes('#')) {
+        const anchorId = href.split('#')[1];
+        if (anchorId) {
+          // Anchor exists and points to a specific element by id or name
+          const targetElement = page.locator(`[id="${anchorId}"], a[name="${anchorId}"]`);
+          await expect(
+            targetElement,
+            `Fragment target "#${anchorId}" not found on ${expectedPath}`
+          ).toBeAttached();
+        }
+      }
 
       // Return to homepage for next iteration (unless we're testing the homepage anchor)
       if (!href.includes('/#')) {

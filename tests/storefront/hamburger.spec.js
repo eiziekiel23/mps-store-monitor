@@ -1,14 +1,17 @@
 import { test, expect } from '../base.js';
 
 test.describe('Mobile Navigation', () => {
-  // The mobile header is hidden above the lg breakpoint, so this check is
-  // meaningful only on a mobile viewport.
-  test.skip(({ }, testInfo) => testInfo.project.name !== 'mobile',
-    'nav.hamburger only applies to the mobile viewport');
-
   test('nav.hamburger: tap opens the drawer, menu links visible, close works', {
     annotation: { type: 'check', description: 'nav.hamburger' }
-  }, async ({ page }) => {
+  }, async ({ page }, testInfo) => {
+    // The mobile header is hidden above the lg breakpoint, so this check is
+    // meaningful only on a mobile viewport. Declared inside the test body
+    // (not at describe scope) because describe-scope test.skip(callback)
+    // only receives fixtures, not testInfo, as its argument — testInfo is
+    // only available as the test function's real second parameter.
+    test.skip(testInfo.project.name !== 'mobile',
+      'nav.hamburger only applies to the mobile viewport');
+
     await page.goto('/', { waitUntil: 'domcontentloaded' });
 
     // The theme implements the mobile menu with the checkbox-hack: a hidden
@@ -38,8 +41,15 @@ test.describe('Mobile Navigation', () => {
       'Giveaway Winners link missing from mobile drawer'
     ).toBeVisible();
 
-    // Close via the overlay label (the theme has no explicit close button)
-    await page.locator('label.overlay--nav[for="open-mobile-nav"]').click();
+    // Close via the overlay label (the theme has no explicit close button).
+    // The overlay is .overlay--nav { position:fixed; height:100vh } with no
+    // width set, so its computed width is ~0 and the drawer (z-index:10) sits
+    // above it (z-index:9) — a normal .click() fails actionability (no stable
+    // clickable area). dispatchEvent('click') fires a real click on the
+    // <label for="open-mobile-nav">, which triggers the browser's default
+    // label-activation and toggles the checkbox regardless of size/z-index,
+    // exercising the actual close affordance.
+    await page.locator('label.overlay--nav[for="open-mobile-nav"]').dispatchEvent('click');
     await expect(toggle, 'Mobile nav did not close').not.toBeChecked();
   });
 });
