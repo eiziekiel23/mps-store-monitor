@@ -1,7 +1,7 @@
 # MPS Store Monitor — Chunked Work State
 
 **Repo:** `/mnt/d/mps-store-monitor` (public GitHub repo)  
-**Last updated:** 2026-10-07 08:12 UTC  
+**Last updated:** 2026-10-08 (Chunk 7 awaiting review)  
 **Chunked workflow:** 5-7 steps per chunk, update after every step, checkpoint + approval between chunks.
 
 ---
@@ -11,51 +11,57 @@
 | Chunk | Status | Focus |
 |-------|--------|-------|
 | **6 (giveaway changelog)** | ✅ done | Giveaway freshness tracking, daily rotation detection, Markdown + Telegram rendering |
-| **7 (remaining storefront checks)** | ▶ in progress | Five remaining checks: nav.rules, nav.quick_links, video.how_to_enter, stock.all, cart.add_pdp + cart.entries |
+| **7 (remaining storefront checks)** | 🟡 awaiting review | Five remaining checks: nav.rules, nav.quick_links, video.how_to_enter, stock.all, cart.add_pdp + cart.entries |
 
 ### Chunk 7 Steps
 
-- [ ] Step 1: nav.rules spec (giveaway rules page reachable)
-- [ ] Step 2: nav.quick_links spec (footer quick links validation)
-- [ ] Step 3: video.how_to_enter spec (video loads and plays)
-- [ ] Step 4: stock.all spec (reference products available)
-- [ ] Step 5: cart.add_pdp + cart.entries specs (add-to-cart + cart render)
-- [ ] Step 6: Run complete storefront test suite + verify green
-- [ ] Step 7: End-to-end checkpoint
+- [x] Step 1: nav.rules spec (official rules page reachable + heading/body)
+- [x] Step 2: nav.quick_links spec (footer quick links validation)
+- [x] Step 3: video.how_to_enter spec (video loads and plays)
+- [x] Step 4: stock.all spec (reference products available; skips without token)
+- [x] Step 5: cart.add_pdp + cart.entries specs (add-to-cart + cart entries math)
+- [x] Step 6: Run storefront suite — 6 passed, 2 skipped, quick_links blocked by test-IP throttle (see Open Items)
+- [x] Step 7: End-to-end checkpoint — committed `ab080f0`, pushed to main
 
 ---
 
 ## Completed
 
-- **Chunk 1 (spike):** Playwright checkout reachability probe, GitHub Actions headless validation, decision on no-xvfb baseline runs
-- **Chunk 2 (design + impl plan):** Store monitor design spec, 8-chunk roadmap, GitHub repo creation
-- **Chunk 3 (alerting):** Incident state machine, Telegram formatter/client, report.js orchestrator, 67 unit tests
-- **Chunk 4 (core storefront checks):** store.reachable, home.sections, product.sections, announcement.correct, timer.correct, flash.banners, product.giveaway_images (7 checks, 2 Playwright projects)
+- **Chunk 7 (remaining storefront checks):** `tests/storefront/rules.spec.js`, `quick-links.spec.js`, `video.spec.js`, `stock.spec.js`, `cart.spec.js`; Cloudflare-bypass rework of `smoke.spec.js` + cart helpers; `config/monitor.config.js` quickLinks corrected to the 3 real footer policy links (commit `ab080f0`)
+- **Chunk 6 (giveaway changelog):** Snapshot diffing, daily-rotation staleness tracking, Markdown changelog, Telegram digest integration, config + CI runner, unit tests (24 new), commit-back step — **verified live in CI** (two `chore(giveaway): update changelog [skip ci]` commits on main)
 - **Chunk 5 (nav):** nav.hamburger (mobile drawer open/close)
-- **Chunk 6 (giveaway changelog):** Snapshot diffing, daily-rotation staleness tracking, Markdown changelog, Telegram digest integration, config + CI runner, unit tests (24 new), commit-back step
+- **Chunk 4 (core storefront checks):** store.reachable, home.sections, product.sections, announcement.correct, timer.correct, flash.banners, product.giveaway_images (7 checks, 2 Playwright projects)
+- **Chunk 3 (alerting):** Incident state machine, Telegram formatter/client, report.js orchestrator, 67 unit tests
+- **Chunk 2 (design + impl plan):** Store monitor design spec, 8-chunk roadmap, GitHub repo creation
+- **Chunk 1 (spike):** Playwright checkout reachability probe, GitHub Actions headless validation, decision on no-xvfb baseline runs
 
 ---
 
 ## Constraints & Decisions
 
-- Playwright tests run on `desktop-chrome` and `mobile` projects; checks are deduplicated (worst-status-wins)
+- **Cloudflare blocks all bare HTTP clients.** Playwright's `request` fixture AND `page.request.*` both receive an HTTP 429 JS challenge (`cf-mitigated: challenge`). Cloudflare fingerprints the TLS/connection layer (JA3/JA4), so sharing cookies does not help. **Every check must use real browser navigation (`page.goto`) or in-page `page.evaluate(() => fetch(...))`.** Never `page.request`.
+- **Booster Theme ATC is a `<div>`, not a `<button>`:** selector is `form.shopify-product-form .btn-atc-pdp`. `getByRole('button')` returns 0 matches; the `<button name="add">` elements are hidden mobile sticky-bar duplicates.
+- **Cart-mutation endpoints are specially protected.** `/cart/add.js` and `/cart/clear.js` 429 far more aggressively than GETs (anti-scalper protection, appropriate for a limited-stock giveaway store). Two distinct 429 bodies observed: Shopify JSON `too_many_requests`, and Cloudflare's HTML challenge page.
+- **Decision (user, 2026-10-08):** keep `cart.add_pdp` / `cart.entries` on the **hourly** cron as originally planned, accepting the rate-limit and any inventory-reservation exposure.
+- Playwright tests run on `desktop-chrome` and `mobile` projects; checks are deduplicated (worst-status-wins); `skipped` never alerts
 - Daily giveaway rotation anchor: 02:00 America/Chicago with 1h grace; staleness if no rotation fields change by ~03:00
 - Incident reminder cooldown: 60 minutes for persistent failures
 - Hourly (cron) runs send Telegram only on state changes; manual runs (`workflow_dispatch`) send full digest
 - Giveaway snapshot + changelog committed to repo (not cached); incident state cached (not committed)
-- Three field keys in giveaway schema are inferred, not yet verified: `flash_giveaway_desktop_banner`, `flash_giveaway_mobile_banner`, `pdp_images` (confirmed key: `flash_giveaway_end_date`)
-- First CI run must confirm the inferred field keys via the `Live field keys:` log line in check.js output
+- **Local dev only:** Chromium cannot launch in WSL2 without `export LD_LIBRARY_PATH=/home/eiziekiel23/.claude/jobs/721a0389/tmp/pwlibs/root/usr/lib/x86_64-linux-gnu` (14 `.so` files extracted in the Chunk 1 spike; `playwright install --with-deps` needs sudo, unavailable). CI is unaffected.
 
 ---
 
 ## Open Items
 
-- Confirm the three secrets are set at the repo level (or add `environment:` block to workflow)
-- Trigger a `workflow_dispatch` run to verify the first live execution and confirm field keys
-- nav.quick_links and nav.rules tests reference `config.navigation.quickLinks` and `config.navigation.rules` — the latter doesn't exist in monitor.config.js yet (need to ask user or infer from the Booster Theme repo)
+- **Chunk 7 verification is incomplete and must be finished in CI, not locally.** Repeated local `/cart/add.js` probing tripped Cloudflare's IP-level protection, which then began 429ing even plain GET navigations (`/policies/privacy-policy`). `cart.add_pdp` / `cart.entries` have **never been observed passing**; the fixes are correct by code inspection only. Verify via `workflow_dispatch` from a clean CI IP before trusting these two checks.
+- Confirm the three secrets are repo-scoped: `SHOPIFY_STOREFRONT_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
+- Three giveaway field keys still inferred, not verified: `flash_giveaway_desktop_banner`, `flash_giveaway_mobile_banner`, `pdp_images` (confirmed: `flash_giveaway_end_date`). Confirm via the `Live field keys:` log line on a `workflow_dispatch` run.
+- `stock.all` skips without `SHOPIFY_STOREFRONT_TOKEN`; it has never run green against live data
+- claude-mem memory observer is signed out (since 2026-10-07T00:32:45Z) — needs `/login`; nothing is being remembered across sessions
 
 ---
 
 ## Next Step
 
-**Chunk 7, Step 1:** Build nav.rules spec — verify the giveaway rules page is reachable and contains expected content.
+**Chunk 8 (pending approval):** trigger a `workflow_dispatch` CI run to (a) confirm `cart.add_pdp` / `cart.entries` pass from a clean IP, (b) confirm the three inferred giveaway field keys, (c) confirm `stock.all` runs green with the storefront token, then proceed to the remaining checkout checks per the 8-chunk roadmap.
