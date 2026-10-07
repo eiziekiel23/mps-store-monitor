@@ -5,6 +5,17 @@ test.describe('Key Navigation Links', () => {
   test('nav.key_links: mandatory links land on correct paths', {
     annotation: { type: 'check', description: 'nav.key_links' }
   }, async ({ page }) => {
+    // This check walks every key link and returns to the homepage between each
+    // one, so it performs roughly 2 full page loads per link (11 in total)
+    // against the live store. Playwright's default 30s test timeout assumes a
+    // local app and leaves only ~3s per navigation, which this check exceeded
+    // whenever the suite ran in parallel and tests competed for bandwidth --
+    // it passed in isolation but failed in full runs. A real store page load
+    // is 2-4s, so we budget ~10s per navigation. A genuinely slow store is
+    // still caught: the per-navigation waits and HTTP status checks below
+    // continue to apply, and this ceiling only prevents a false alarm.
+    test.setTimeout(120_000);
+
     await page.goto('/', { waitUntil: 'domcontentloaded' });
 
     for (const [text, expectedPath] of Object.entries(config.navigation.keyLinks)) {
