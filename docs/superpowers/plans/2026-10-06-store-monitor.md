@@ -260,3 +260,21 @@ Also record which express buttons were detected and the discovered labels and se
 - [ ] **Step 6: Verify and clean up (checkpoint)**
 
 Confirm the decision is backed by the `result.json` files and screenshots. Delete the remote branches (`git push origin --delete spike spike-results`) and the scratch clone. Run `/checkpoint` and stop for approval.
+
+## Chunk 3 — Alerting: Incident State & Telegram
+
+**Goal:** Process the raw telemetry results to track pass/fail state over time, apply reminder cooldowns, and format grouped Telegram alerts.
+
+- [ ] **Step 1: Write `src/alerting/incidents.js`**
+  Implement `applyRun(state, checks, { nowMs, traceId })` per the plan interfaces. It maps previous state arrays and current results into `opened`, `reminder`, and `recovered` events, maintaining a 60-minute reminder cooldown.
+- [ ] **Step 2: Write `src/alerting/telegram.js`**
+  Implement `formatRunMessage({ events, traceId, runUrl, artifactUrl })` for grouped 🔴/🔁/✅ emoji output, and `sendTelegram()` with HTTP 429 `Retry-After` honoring (once).
+- [ ] **Step 3: Write `src/report.js`**
+  The post-run orchestrator. Reads `telemetry/results.json`, reads `state/incidents.json` (or creates empty), calls `applyRun`, sends Telegram, updates state.
+- [ ] **Step 4: Unit tests for incidents (Review Focus 5)**
+  Write `tests/unit/incidents.test.js`. Prove that a 40-minute gap between runs does not trigger double-reminders or drop state.
+- [ ] **Step 5: Unit tests for Telegram (Review Focus 2)**
+  Write `tests/unit/telegram.test.js`. Mock `fetch` to simulate a 429 response, verify it waits exactly `retry_after` and succeeds, and verify it exits cleanly on second failure.
+- [ ] **Step 6: Dry-run and Checkpoint**
+  Execute `node src/report.js --dry-run` against synthetic check fixtures to print formatted alert outputs, then commit and checkpoint.
+
