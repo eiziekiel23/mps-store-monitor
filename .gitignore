@@ -3,7 +3,7 @@ test-results/
 playwright-report/
 blob-report/
 playwright/.cache/
-telemetry/
+/telemetry/
 spike-results/
 .env
 .claude/
