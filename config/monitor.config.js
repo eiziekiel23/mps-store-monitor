@@ -41,13 +41,11 @@ export default {
       'Customer Reviews': '/pages/customer-reviews'
     },
     quickLinks: {
-      'Search': '/search',
-      'Refund Policy': '/policies/refund-policy',
+      'Refund Policy': '/#refund-faq',
       'Privacy Policy': '/policies/privacy-policy',
-      'Terms of Service': '/policies/terms-of-service',
-      'Shipping Policy': '/policies/shipping-policy',
-      'Contact Information': '/policies/contact-information'
-    }
+      'Terms of Service': '/policies/terms-of-service'
+    },
+    rules: '/pages/official-rules'
   },
   stock: {
     exclusionsRegex: /pass|protection|^golden ticket/i
