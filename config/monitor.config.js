@@ -74,5 +74,27 @@ export default {
       { max: 1000, price: 18.00 },
       { max: Infinity, price: 25.00 }
     ]
+  },
+  giveaway: {
+    // The flash-giveaway metaobject fields are rotated once a day, normally
+    // around 02:00 America/Chicago. The monitor alerts if they haven't rotated
+    // by anchorHour + graceMs, or if the active giveaway's end date has passed.
+    timeZone: 'America/Chicago',
+    anchorHour: 2,
+    graceMs: 60 * 60 * 1000, // 1h → due by ~03:00 Chicago
+    // A change to any of these fields counts as "today's giveaway rotated".
+    // Every field change is still logged; only these drive the freshness verdict.
+    // Field keys inferred from metaobject display names: Flash Giveaway End Date,
+    // Flash Giveaway Desktop Banner, Flash Giveaway Mobile Banner, PDP Images.
+    // Verify against giveaway/check.js field-key logs on first CI run.
+    rotationFields: [
+      'flash_giveaway_end_date',
+      'flash_giveaway_desktop_banner',
+      'flash_giveaway_mobile_banner',
+      'pdp_images'
+    ],
+    // Fields excluded from the changelog entirely (noisy, non-semantic churn).
+    ignoreFields: [],
+    maxEntries: 180
   }
 };

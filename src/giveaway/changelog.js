@@ -26,12 +26,16 @@ export const DEFAULT_GRACE_MS = 60 * 60 * 1000; // 1h -> due by ~03:00 Chicago
 
 /**
  * Fields whose change means "today's giveaway actually rotated".
- * The changelog records every field; only these drive the freshness verdict,
- * so an image CDN URL churning does not mask a missed rotation.
+ * The changelog records every field; only these drive the freshness verdict.
+ * These field names are inferred from the live Shopify metaobject schema:
+ * "Flash Giveaway End Date", "Flash Giveaway Desktop Banner", "Flash Giveaway Mobile Banner", "PDP Images".
+ * Verify actual field keys via the giveaway/check.js logs on first CI run.
  */
 export const DEFAULT_ROTATION_FIELDS = [
-  'flash_giveaway_start_date',
-  'flash_giveaway_end_date'
+  'flash_giveaway_end_date',
+  'flash_giveaway_desktop_banner',
+  'flash_giveaway_mobile_banner',
+  'pdp_images'
 ];
 
 /** Keep the persisted log bounded so the committed JSON stays reviewable. */

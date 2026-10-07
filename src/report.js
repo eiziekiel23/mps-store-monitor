@@ -3,11 +3,17 @@ import path from 'node:path';
 import { applyRun } from './alerting/incidents.js';
 import { formatRunMessage, formatStatusMessage, sendTelegram } from './alerting/telegram.js';
 import { aggregateChecks } from './alerting/checks.js';
+import { formatChangesForTelegram } from './giveaway/changelog.js';
 
 // Parse command-line flags
 const dryRun = process.argv.includes('--dry-run');
 const resultsPath = path.resolve('telemetry/results.json');
 const statePath = path.resolve('state/incidents.json');
+// Written by src/giveaway/check.js, which runs as its own workflow step
+// (separate from the Playwright suite) because it hits the Storefront API
+// directly rather than driving a browser.
+const giveawayResultPath = path.resolve('telemetry/giveaway-result.json');
+const giveawayChangesPath = path.resolve('telemetry/giveaway-changes.json');
 
 if (!fs.existsSync(resultsPath)) {
   console.error('No results.json found in telemetry/. Skipping report.');
@@ -25,12 +31,24 @@ if (fs.existsSync(statePath)) {
   }
 }
 
+// Fold the giveaway freshness check in alongside the Playwright checks so it
+// gets the same incident tracking (opened/reminder/recovered) and shows up
+// in the manual status digest like any other check.
+const allChecks = [...(results.checks || [])];
+if (fs.existsSync(giveawayResultPath)) {
+  try {
+    allChecks.push(JSON.parse(fs.readFileSync(giveawayResultPath, 'utf8')));
+  } catch (err) {
+    console.warn('Failed to parse telemetry/giveaway-result.json, omitting from this run:', err.message);
+  }
+}
+
 // Each logical check runs once per Playwright project (desktop-chrome,
 // mobile), so results.checks holds one row per project. Collapse those
 // into a single record per check ID (worst-status-wins) before the
 // incident state machine or the Telegram report ever see them — otherwise
 // every check is double-counted and alerts/digests show duplicate entries.
-const aggregated = aggregateChecks(results.checks || []);
+const aggregated = aggregateChecks(allChecks);
 
 const { state: nextState, events } = applyRun(prevState, aggregated, {
   nowMs: Date.now(),
@@ -78,8 +96,23 @@ if (events.length > 0) {
 // On a manual/local run, additionally send a full status digest of every
 // check, even when nothing changed — this is the "full test report".
 if (isManualRun) {
-  await dispatch(
-    formatStatusMessage({ checks: aggregated, traceId: results.traceId, runUrl }),
-    'Manual status report'
-  );
+  let statusReport = formatStatusMessage({ checks: aggregated, traceId: results.traceId, runUrl });
+
+  // If the giveaway check logged changes, append the old→new pairs to the manual digest.
+  if (fs.existsSync(giveawayChangesPath)) {
+    try {
+      const giveawayChanges = JSON.parse(fs.readFileSync(giveawayChangesPath, 'utf8'));
+      // isFirstRun is flagged so the digest omits the "no baseline yet" non-change.
+      if (!giveawayChanges.isFirstRun && giveawayChanges.changes?.length > 0) {
+        const changeBlock = formatChangesForTelegram(giveawayChanges.changes);
+        if (changeBlock) {
+          statusReport += changeBlock;
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to parse telemetry/giveaway-changes.json:', err.message);
+    }
+  }
+
+  await dispatch(statusReport, 'Manual status report');
 }

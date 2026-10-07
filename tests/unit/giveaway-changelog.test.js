@@ -120,10 +120,13 @@ describe('giveaway/changelog - evaluateStaleness', () => {
 });
 
 describe('giveaway/changelog - applyChangelog', () => {
+  // Mirrors the live metaobject schema: end date + the three creative assets
+  // that are swapped each day alongside it.
   const giveaway = {
-    flash_giveaway_start_date: '2026-10-07 00:00:00',
     flash_giveaway_end_date: '2026-10-07 23:59:00',
-    prize_name: 'Charizard'
+    flash_giveaway_desktop_banner: 'https://cdn.shopify.com/desktop-oct07.png',
+    flash_giveaway_mobile_banner: 'https://cdn.shopify.com/mobile-oct07.png',
+    pdp_images: 'https://cdn.shopify.com/pdp-oct07.png'
   };
 
   test('first run seeds the baseline without reporting changes or staleness', () => {
@@ -157,16 +160,23 @@ describe('giveaway/changelog - applyChangelog', () => {
   });
 
   test('a non-rotation change is logged but does NOT count as a rotation', () => {
+    // `internal_note` is a field the metaobject may carry but that is NOT in
+    // rotationFields: editing it must not satisfy the daily-rotation contract.
     const prevState = {
-      fields: { ...giveaway, prize_name: 'Pikachu' },
+      fields: { ...giveaway, internal_note: 'draft copy' },
       lastRotationMs: Date.parse('2026-10-06T07:05:00Z'), // yesterday
       entries: []
     };
 
-    const res = applyChangelog(prevState, giveaway, { nowMs: MIDDAY_UTC });
+    const res = applyChangelog(prevState, giveaway, {
+      nowMs: MIDDAY_UTC,
+      // Passed explicitly so the test keeps its meaning if the live field keys
+      // (and therefore the defaults) are corrected later.
+      rotationFields: ['flash_giveaway_end_date', 'flash_giveaway_desktop_banner']
+    });
 
     assert.equal(res.changes.length, 1);
-    assert.equal(res.changes[0].field, 'prize_name');
+    assert.equal(res.changes[0].field, 'internal_note');
     // Logged...
     assert.equal(res.nextState.entries.length, 1);
     assert.equal(res.nextState.entries[0].rotated, false);
@@ -192,7 +202,7 @@ describe('giveaway/changelog - applyChangelog', () => {
   test('newest entry is first and history is capped by maxEntries', () => {
     const old = Array.from({ length: 5 }, (_, i) => ({ at: `old-${i}`, rotated: false, changes: [] }));
     const prevState = {
-      fields: { ...giveaway, prize_name: 'Pikachu' },
+      fields: { ...giveaway, internal_note: 'draft copy' },
       lastRotationMs: MIDDAY_UTC,
       entries: old
     };

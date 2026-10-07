@@ -159,21 +159,24 @@ export async function fetchSnapshot({ storeUrl, storefrontToken }) {
   // Flatten active giveaway
   const giveawayNodes = data.giveaway.nodes || [];
 
-  // Find the active giveaway based on dates (using system time for now)
+  // Find the active giveaway based on the end date.
+  // The metaobject has no separate start_date field; the "active" giveaway is the
+  // one currently counting down (soonest future end date), or the first node as fallback.
   const nowMs = Date.now();
   let activeNode = giveawayNodes[0]; // Default to first if dates missing/bad
+  let soonestEndMs = Infinity;
 
   for (const n of giveawayNodes) {
     const f = Object.fromEntries(n.fields.map(field => [field.key, field.value]));
-    // Check flash giveaway range. Dates may be a seconds timestamp, an ISO
-    // string, or store wall-clock text ("October 7, 2026 02:00:00"); the theme
-    // reads them as America/Chicago, so parseGiveawayDate does the same.
-    if (f.flash_giveaway_start_date && f.flash_giveaway_end_date) {
-      const start = parseGiveawayDate(f.flash_giveaway_start_date);
-      const end = parseGiveawayDate(f.flash_giveaway_end_date);
-      if (start != null && end != null && nowMs > start && nowMs < end) {
+    if (f.flash_giveaway_end_date) {
+      // Dates may be a seconds timestamp, an ISO string, or store wall-clock text
+      // ("October 7, 2026 02:00:00"); the theme reads them as America/Chicago,
+      // so parseGiveawayDate does the same.
+      const endMs = parseGiveawayDate(f.flash_giveaway_end_date);
+      // Pick the node with the soonest future end date (the one currently active).
+      if (endMs != null && endMs > nowMs && endMs < soonestEndMs) {
         activeNode = n;
-        break;
+        soonestEndMs = endMs;
       }
     }
   }
