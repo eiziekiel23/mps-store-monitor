@@ -8,19 +8,22 @@ test.describe('Product Page Giveaway Brand', () => {
     }, async ({ page }) => {
       await page.goto(`/products/${handle}`, { waitUntil: 'load' });
 
-      // Selector for the product giveaway image
-      const locator = page.locator('[class*="giveaway-image"], [id*="giveaway-image"]');
+      // The theme renders the giveaway section on each product page using
+      // three responsive <img> variants: give-away-desktop-banner-*, give-away-tablet-banner-*,
+      // give-away-mobile-banner-*. All carry a "give-away-" class prefix.
+      const locator = page.locator('img[class*="give-away-"]');
 
       const count = await locator.count();
-      expect(count, `Giveaway image not found on ${handle}`).toBeGreaterThan(0);
+      expect(count, `Giveaway banner images not found on ${handle}`).toBeGreaterThan(0);
 
-      const src = await locator.first().getAttribute('src');
-      const isLoaded = await page.evaluate((s) => {
-        const img = document.querySelector(`img[src="${s}"]`);
-        return img && img.naturalWidth > 0;
-      }, src);
+      const broken = await locator.evaluateAll((imgs) =>
+        imgs
+          .filter((img) => !img.currentSrc || img.naturalWidth === 0)
+          .map((img) => img.getAttribute('src') || '(no src)')
+      );
 
-      expect(isLoaded, `Giveaway brand image ${src} failed to load on ${handle}`).toBe(true);
+      expect(broken, `Giveaway banner images failed to load on ${handle}: ${broken.join(', ')}`)
+        .toHaveLength(0);
     });
   }
 });

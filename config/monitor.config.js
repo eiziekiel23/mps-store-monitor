@@ -1,20 +1,24 @@
 export default {
   storeUrl: 'https://mysterypokeslabs.com',
   referenceProducts: [
-    'mystery-boost-box',
-    'charizard-vintage-pack'
+    '5x-pokemon-booster-packs',
+    'premium-modern-pokemon-cards'
   ],
+  // Section tokens are matched as substrings against each section's class or id
+  // on the live site. The live theme uses underscores in Shopify section ids
+  // (e.g. mps_trust_badge) and hyphens in some class names (e.g. section--flash-timer),
+  // so tokens below are chosen to match the real rendered markup.
   sections: {
     home: [
       'header',
       'announcement',
-      'giveaway-section-monthly-timer',
-      'giveaway-section-monthly-flash',
-      'trust-badge',
+      'giveaway_timer',          // id: ...__mps_giveaway_timer_flash
+      'giveaway_section_monthly_flash',
+      'trust_badge',             // id: ...__mps_trust_badge
       'video',
-      'featured-collection',
-      'winners',
-      'customer-pulls',
+      'featured_collection',     // id: ...__section_featured_collection
+      'winners',                 // id: ...__giveaway_winners_grid
+      'customer-pulls',          // class: section--customer-pulls-grid
       'reviews',
       'faq',
       'footer'
@@ -22,15 +26,16 @@ export default {
     product: [
       'header',
       'announcement',
-      'giveaway-section-monthly-image',
-      'main-product',
+      'giveaway_section_monthly_flash', // product pages show the same flash banner section
+      'product-header',          // id: ...__zp-product-header-content
       'reviews',
       'footer'
     ]
   },
   navigation: {
     keyLinks: {
-      'Sealed Pokémon': '/collections/sealed-pokemon',
+      'Mystery Pokémon': '#mystery-pokemon',
+      'Sealed Pokémon': '/pages/sealed-pokemon',
       'Giveaway Winners': '/pages/giveaway-winners',
       'Customer Pulls': '/pages/customer-pulls',
       'Customer Reviews': '/pages/customer-reviews'

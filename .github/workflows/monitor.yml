@@ -35,6 +35,8 @@ jobs:
           restore-keys: incident-state-v1
 
       - name: Run monitoring tests
+        env:
+          SHOPIFY_STOREFRONT_TOKEN: ${{ secrets.SHOPIFY_STOREFRONT_TOKEN }}
         run: npm test
 
       - name: Process results and send alerts
