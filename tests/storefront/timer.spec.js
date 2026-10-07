@@ -1,5 +1,5 @@
 import { test, expect } from '../base.js';
-import { fetchSnapshot } from '../../src/snapshot.js';
+import { fetchSnapshot, parseGiveawayDate } from '../../src/snapshot.js';
 import config from '../../config/monitor.config.js';
 
 test.describe('Storefront Countdown Timer', () => {
@@ -48,21 +48,17 @@ test.describe('Storefront Countdown Timer', () => {
 
     // Validate against metaobject data
     if (giveawayData?.flash_giveaway_end_date) {
-      const parseMetaDate = (v) => {
-        if (v == null) return null;
-        const s = String(v).trim();
-        const n = Number(s);
-        if (String(n) === s && s.length <= 13) return Math.floor(n);
-        const d = new Date(s);
-        if (!isNaN(d.getTime())) return Math.floor(d.getTime() / 1000);
-        return null;
-      };
-
-      const expectedEnd = parseMetaDate(giveawayData.flash_giveaway_end_date);
-      if (expectedEnd == null) {
+      // The metaobject stores dates as store wall-clock time with no timezone,
+      // and the theme's countdown reads them as America/Chicago. Parsing them
+      // naively made the test compare against UTC, producing a constant drift
+      // equal to the Chicago offset (5h during CDT). parseGiveawayDate applies
+      // the zone (DST-aware), matching what the on-page timer actually counts to.
+      const expectedEndMs = parseGiveawayDate(giveawayData.flash_giveaway_end_date);
+      if (expectedEndMs == null) {
         throw new Error(`Invalid flash_giveaway_end_date format from metaobject: '${giveawayData.flash_giveaway_end_date}'`);
       }
 
+      const expectedEnd = Math.floor(expectedEndMs / 1000);
       const now = Math.floor(Date.now() / 1000);
       const expectedRemaining = expectedEnd - now;
 
