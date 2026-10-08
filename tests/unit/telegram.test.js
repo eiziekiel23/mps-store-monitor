@@ -5,7 +5,7 @@ import { formatRunMessage, formatStatusMessage, sendTelegram } from '../../src/a
 describe('alerting/telegram - formatStatusMessage', () => {
   const traceId = 'b'.repeat(32);
 
-  test('reports an all-green run with a success header', () => {
+  test('reports an all-green run with grouped per-check status board', () => {
     const checks = [
       { id: 'store.reachable', status: 'passed' },
       { id: 'home.sections', status: 'passed' },
@@ -16,11 +16,15 @@ describe('alerting/telegram - formatStatusMessage', () => {
 
     assert.ok(msg.includes('✅ *MPS Store Monitor — Manual Run Report*'));
     assert.ok(msg.includes('2 passed, 0 failed, 1 skipped / 3 total'));
-    assert.ok(msg.includes('✅ All checks passing'));
+    // Per-check status board replaces "All checks passing" summary
+    assert.ok(msg.includes('*Storefront*'));
+    assert.ok(msg.includes('✅ Store reachable'));
+    assert.ok(msg.includes('*Navigation*'));
+    assert.ok(msg.includes('⏭️ Mobile hamburger menu'));
     assert.ok(msg.includes(traceId));
   });
 
-  test('lists each failing check with its error and uses the failure header', () => {
+  test('shows failure details with friendly names and check IDs', () => {
     const checks = [
       { id: 'store.reachable', status: 'passed' },
       { id: 'nav.key_links', status: 'failed', error: 'Test timeout of 30000ms exceeded.' }
@@ -30,16 +34,16 @@ describe('alerting/telegram - formatStatusMessage', () => {
 
     assert.ok(msg.includes('🔴 *MPS Store Monitor — Manual Run Report*'));
     assert.ok(msg.includes('1 passed, 1 failed'));
-    assert.ok(msg.includes('🔴 *FAILURES*'));
-    assert.ok(msg.includes('• `nav.key_links`'));
+    assert.ok(msg.includes('🔴 *FAILURE DETAILS*'));
+    // Friendly name + check ID shown together for ops reference
+    assert.ok(msg.includes('• Giveaway / Gallery / Reviews links (`nav.key_links`)'));
     assert.ok(msg.includes('_Test timeout of 30000ms exceeded._'));
-    assert.ok(!msg.includes('All checks passing'));
   });
 
-  test('counts flaky checks separately and links the run URL when provided', () => {
+  test('counts flaky checks separately and displays them with warning emoji', () => {
     const checks = [
-      { id: 'a', status: 'passed' },
-      { id: 'b', status: 'flaky' }
+      { id: 'store.reachable', status: 'passed' },
+      { id: 'timer.correct', status: 'flaky' }
     ];
 
     const msg = formatStatusMessage({
@@ -48,8 +52,37 @@ describe('alerting/telegram - formatStatusMessage', () => {
       runUrl: 'https://github.com/org/repo/actions/runs/123'
     });
 
-    assert.ok(msg.includes('1 flaky'));
+    assert.ok(msg.includes('1 passed, 1 flaky, 0 failed, 0 skipped / 2 total'));
+    assert.ok(msg.includes('⚠️ Countdown timer'), 'flaky check shown with warning emoji');
     assert.ok(msg.includes('(https://github.com/org/repo/actions/runs/123)'));
+  });
+
+  test('groups checks by category in the status board', () => {
+    const checks = [
+      { id: 'store.reachable', status: 'passed' },
+      { id: 'nav.key_links', status: 'passed' },
+      { id: 'cart.add_pdp', status: 'passed' },
+      { id: 'checkout.entries', status: 'passed' },
+      { id: 'stock.all', status: 'passed' },
+      { id: 'giveaway.freshness', status: 'passed' }
+    ];
+
+    const msg = formatStatusMessage({ checks, traceId });
+
+    // Each category header appears in order
+    const storefront_idx = msg.indexOf('*Storefront*');
+    const nav_idx       = msg.indexOf('*Navigation*');
+    const cart_idx      = msg.indexOf('*Cart*');
+    const checkout_idx  = msg.indexOf('*Checkout*');
+    const stock_idx     = msg.indexOf('*Stock*');
+    const giveaway_idx  = msg.indexOf('*Giveaway*');
+
+    assert.ok(storefront_idx > 0, 'Storefront group present');
+    assert.ok(nav_idx > storefront_idx, 'groups ordered: Navigation after Storefront');
+    assert.ok(cart_idx > nav_idx, 'groups ordered: Cart after Navigation');
+    assert.ok(checkout_idx > cart_idx, 'groups ordered: Checkout after Cart');
+    assert.ok(stock_idx > checkout_idx, 'groups ordered: Stock after Checkout');
+    assert.ok(giveaway_idx > stock_idx, 'groups ordered: Giveaway after Stock');
   });
 });
 
@@ -60,7 +93,7 @@ describe('alerting/telegram - formatRunMessage', () => {
     assert.equal(formatRunMessage({ events: [], traceId }), null);
   });
 
-  test('formats opened, reminder, and recovered sections', () => {
+  test('formats opened, reminder, and recovered sections with friendly labels', () => {
     const events = [
       { type: 'opened', check: 'home.sections', error: 'Missing trust badge' },
       { type: 'reminder', check: 'timer.correct', durationMs: 7200000 },
@@ -74,16 +107,59 @@ describe('alerting/telegram - formatRunMessage', () => {
     });
 
     assert.ok(msg.includes('🔴 *NEW FAILURES*'));
-    assert.ok(msg.includes('• `home.sections`'));
+    assert.ok(msg.includes('• Homepage sections render (`home.sections`)'));
     assert.ok(msg.includes('_Missing trust badge_'));
 
     assert.ok(msg.includes('🔁 *STILL FAILING*'));
-    assert.ok(msg.includes('• `timer.correct` (2.0h)'));
+    assert.ok(msg.includes('• Countdown timer (`timer.correct`) — 2.0h'));
 
     assert.ok(msg.includes('✅ *RECOVERED*'));
-    assert.ok(msg.includes('• `nav.rules` (after 30m)'));
+    assert.ok(msg.includes('• Official rules page (`nav.rules`) — after 30m'));
 
     assert.ok(msg.includes('[Trace ID: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`](https://github.com/org/repo/actions/runs/123)'));
+  });
+
+  test('appends per-check status board when full checks list is provided', () => {
+    const events = [
+      { type: 'opened', check: 'flash.banners', error: 'Banner not found' }
+    ];
+    const checks = [
+      { id: 'store.reachable', status: 'passed' },
+      { id: 'flash.banners', status: 'failed', error: 'Banner not found' },
+      { id: 'timer.correct', status: 'passed' }
+    ];
+
+    const msg = formatRunMessage({
+      events,
+      checks,
+      traceId,
+      runUrl: 'https://github.com/org/repo/actions/runs/123'
+    });
+
+    // Alert section
+    assert.ok(msg.includes('🔴 *NEW FAILURES*'));
+    assert.ok(msg.includes('• Flash giveaway banners (`flash.banners`)'));
+
+    // Status board section (added when checks provided)
+    assert.ok(msg.includes('📋 *Check Status*'));
+    assert.ok(msg.includes('✅ Store reachable'));
+    assert.ok(msg.includes('🔴 Flash giveaway banners'));
+    assert.ok(msg.includes('✅ Countdown timer'));
+  });
+
+  test('does not append status board when checks list is not provided', () => {
+    const events = [
+      { type: 'opened', check: 'store.reachable', error: 'Timeout' }
+    ];
+
+    const msg = formatRunMessage({
+      events,
+      traceId,
+      runUrl: 'https://github.com/org/repo/actions/runs/123'
+    });
+
+    assert.ok(msg.includes('🔴 *NEW FAILURES*'));
+    assert.ok(!msg.includes('📋 *Check Status*'), 'status board not added when checks not provided');
   });
 });
 

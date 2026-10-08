@@ -1,11 +1,59 @@
+import { CHECK_LABELS, CHECK_GROUPS, STATUS_EMOJI } from './labels.js';
+
 /**
- * Formats a list of AlertEvents into a single Telegram Markdown message.
+ * Build a grouped per-check status board for Telegram (Markdown mode).
+ *
+ * Checks are rendered under their category header (Storefront, Navigation, …).
+ * Checks that have no entry in CHECK_GROUPS fall into an "Other" group at the
+ * end so newly-added checks always appear rather than being silently dropped.
+ *
+ * @param {Array<{id:string, status:string}>} checks - aggregated check results
+ * @returns {string} Markdown block (starts with a blank line)
  */
-export function formatRunMessage({ events = [], traceId, runUrl, artifactUrl }) {
+function buildStatusBoard(checks) {
+  if (!checks.length) return '';
+
+  const byId = new Map(checks.map(c => [c.id, c]));
+  const allGroupIds = new Set(CHECK_GROUPS.flatMap(g => g.ids));
+  const lines = [];
+
+  for (const group of CHECK_GROUPS) {
+    const present = group.ids.map(id => byId.get(id)).filter(Boolean);
+    if (!present.length) continue;
+
+    lines.push(`\n*${group.label}*`);
+    for (const c of present) {
+      const emoji = STATUS_EMOJI[c.status] ?? '❓';
+      const label = CHECK_LABELS[c.id] ?? c.id;
+      lines.push(`${emoji} ${label}`);
+    }
+  }
+
+  // Ungrouped checks (unknown ids) — append so nothing is silently dropped
+  const ungrouped = checks.filter(c => !allGroupIds.has(c.id));
+  if (ungrouped.length) {
+    lines.push('\n*Other*');
+    for (const c of ungrouped) {
+      const emoji = STATUS_EMOJI[c.status] ?? '❓';
+      lines.push(`${emoji} ${CHECK_LABELS[c.id] ?? c.id}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Formats state-transition events into a Telegram Markdown alert.
+ *
+ * Optionally accepts the full aggregated check list (`checks`) to append a
+ * per-check status board at the end — pass it from report.js so operators see
+ * the full picture alongside the failure/recovery event.
+ */
+export function formatRunMessage({ events = [], traceId, runUrl, artifactUrl, checks = [] }) {
   if (!events.length) return null;
 
-  const opened = events.filter(e => e.type === 'opened');
-  const reminder = events.filter(e => e.type === 'reminder');
+  const opened    = events.filter(e => e.type === 'opened');
+  const reminder  = events.filter(e => e.type === 'reminder');
   const recovered = events.filter(e => e.type === 'recovered');
 
   const lines = ['*MPS Store Monitor Alert*'];
@@ -13,24 +61,33 @@ export function formatRunMessage({ events = [], traceId, runUrl, artifactUrl }) 
   if (opened.length) {
     lines.push('\n🔴 *NEW FAILURES*');
     for (const e of opened) {
-      lines.push(`• \`${e.check}\`\n  _${e.error || 'Unknown error'}_`);
+      const label = CHECK_LABELS[e.check] ?? e.check;
+      lines.push(`• ${label} (\`${e.check}\`)\n  _${e.error || 'Unknown error'}_`);
     }
   }
 
   if (reminder.length) {
     lines.push('\n🔁 *STILL FAILING*');
     for (const e of reminder) {
+      const label = CHECK_LABELS[e.check] ?? e.check;
       const hours = (e.durationMs / 3600000).toFixed(1);
-      lines.push(`• \`${e.check}\` (${hours}h)`);
+      lines.push(`• ${label} (\`${e.check}\`) — ${hours}h`);
     }
   }
 
   if (recovered.length) {
     lines.push('\n✅ *RECOVERED*');
     for (const e of recovered) {
+      const label = CHECK_LABELS[e.check] ?? e.check;
       const mins = Math.round(e.durationMs / 60000);
-      lines.push(`• \`${e.check}\` (after ${mins}m)`);
+      lines.push(`• ${label} (\`${e.check}\`) — after ${mins}m`);
     }
+  }
+
+  // Per-check status board (only when caller passes the full check list)
+  if (checks.length > 0) {
+    lines.push('\n📋 *Check Status*');
+    lines.push(buildStatusBoard(checks));
   }
 
   const link = artifactUrl || runUrl;
@@ -44,31 +101,36 @@ export function formatRunMessage({ events = [], traceId, runUrl, artifactUrl }) 
 }
 
 /**
- * Formats a full test status report for manual runs, showing all check results.
- * Used for workflow_dispatch (manual) runs to give visibility into the full state.
+ * Formats a full test status report for manual (workflow_dispatch) runs.
+ * Shows every check grouped by category so operators can scan the full
+ * picture in one glance — no hunting through raw passed/failed counts.
  */
 export function formatStatusMessage({ checks = [], traceId, runUrl }) {
-  const passed = checks.filter(c => c.status === 'passed').length;
-  const flaky = checks.filter(c => c.status === 'flaky').length;
-  const failed = checks.filter(c => c.status === 'failed');
+  const passed  = checks.filter(c => c.status === 'passed').length;
+  const flaky   = checks.filter(c => c.status === 'flaky').length;
+  const failed  = checks.filter(c => c.status === 'failed');
   const skipped = checks.filter(c => c.status === 'skipped').length;
+  const total   = checks.length;
 
-  const total = checks.length;
   const statusEmoji = failed.length > 0 ? '🔴' : '✅';
-
   const lines = [`${statusEmoji} *MPS Store Monitor — Manual Run Report*`];
+
+  // Summary line
   lines.push(`\n${passed} passed${flaky ? `, ${flaky} flaky` : ''}, ${failed.length} failed, ${skipped} skipped / ${total} total`);
 
+  // Per-check status board (always shown — this is the "checklist")
+  lines.push(buildStatusBoard(checks));
+
+  // Failure detail block — only when something broke
   if (failed.length > 0) {
-    lines.push('\n🔴 *FAILURES*');
-    failed.forEach(c => {
-      lines.push(`• \`${c.id}\`\n  _${c.error || 'Unknown error'}_`);
+    lines.push('\n🔴 *FAILURE DETAILS*');
+    for (const c of failed) {
+      const label = CHECK_LABELS[c.id] ?? c.id;
+      lines.push(`• ${label} (\`${c.id}\`)\n  _${c.error || 'Unknown error'}_`);
       if (c.platformNote) {
         lines.push(`  _(${c.platformNote})_`);
       }
-    });
-  } else {
-    lines.push('\n✅ All checks passing');
+    }
   }
 
   if (runUrl) {

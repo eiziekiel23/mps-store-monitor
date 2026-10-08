@@ -86,7 +86,7 @@ async function dispatch(text, label) {
 // Alert on state transitions (new failures, recoveries, reminders).
 if (events.length > 0) {
   await dispatch(
-    formatRunMessage({ events, traceId: results.traceId, runUrl }),
+    formatRunMessage({ events, traceId: results.traceId, runUrl, checks: aggregated }),
     `Alert (${events.length} event(s))`
   );
 } else {
