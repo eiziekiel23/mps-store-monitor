@@ -191,7 +191,7 @@ export async function fetchSnapshot({ storeUrl, storefrontToken }) {
 
   const bonusCoupons = (data.bonusCoupons.nodes || []).map(n => {
     const fields = Object.fromEntries(n.fields.map(f => [f.key, f.value]));
-    return { code: fields.coupon_code, amount: Number(fields.amount || 0) };
+    return { code: fields.code, amount: Number(fields.amount || 0) };
   });
 
   const products = (data.products.nodes || []).map(p => ({

@@ -1,5 +1,13 @@
 export default {
   storeUrl: 'https://mysterypokeslabs.com',
+  // Shopify Admin API — used for real inventory data (inventoryPolicy /
+  // availableForSale per variant) and metaobject field definitions. The Admin
+  // origin (*.myshopify.com) is token-authenticated and bypasses the Cloudflare
+  // bot challenge that gates the public storefront, so a plain fetch works.
+  admin: {
+    shop: 'mysterypokeslabs.myshopify.com',
+    apiVersion: '2026-10'
+  },
   referenceProducts: [
     '5x-pokemon-booster-packs',
     'premium-modern-pokemon-cards'
@@ -48,7 +56,21 @@ export default {
     rules: '/pages/official-rules'
   },
   stock: {
-    exclusionsRegex: /pass|protection|^golden ticket/i
+    exclusionsRegex: /pass|protection|^golden ticket/i,
+    // Handles of products known to be intentionally sold out (limited items).
+    // Seeded from the Admin API snapshot on 2026-10-08. Allows the DENY-policy
+    // check to pass on known sellouts and alert only on NEW unavailability.
+    // When a product restocks + resells, manually remove it from this list.
+    knownSoldOut: [
+      'prismatic-surprise-box-and-golden-ticket',
+      'mega-charizard-x-ex-ultra-premium-collection-and-golden-ticket',
+      'team-rocket-briefcase-and-golden-ticket',
+      'shiny-treasure-ex-japanese-high-class-booster-box',
+      'mega-dream-ex-high-class-japanese-booster-box-and-golden-ticket',
+      'team-rocket-moltres-ex-upc-and-golden-ticket',
+      'celebrations-ultra-premium-collection-and-two-golden-tickets',
+      'sword-shield-charizard-ultra-premium-collection-and-two-golden-tickets'
+    ]
   },
   trackers: {
     blockRegex: [

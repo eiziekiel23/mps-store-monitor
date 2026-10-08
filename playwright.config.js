@@ -1,5 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
 
+// Load .env for local runs (CI injects vars via secrets; this is a silent no-op when the file
+// is absent). Requires Node ≥ 20.6.
+try { process.loadEnvFile('.env'); } catch { /* file absent — ignore */ }
+
 export default defineConfig({
   testDir: './tests',
   fullyParallel: true,
