@@ -1,7 +1,7 @@
 # MPS Store Monitor — Chunked Work State
 
 **Repo:** `/mnt/d/mps-store-monitor` (public GitHub repo)  
-**Last updated:** 2026-10-08 (Chunk 7 awaiting review)  
+**Last updated:** 2026-10-08 (Chunk 7 awaiting review — cart checks now verified green)  
 **Chunked workflow:** 5-7 steps per chunk, update after every step, checkpoint + approval between chunks.
 
 ---
@@ -22,12 +22,14 @@
 - [x] Step 5: cart.add_pdp + cart.entries specs (add-to-cart + cart entries math)
 - [x] Step 6: Run storefront suite — 6 passed, 2 skipped, quick_links blocked by test-IP throttle (see Open Items)
 - [x] Step 7: End-to-end checkpoint — committed `ab080f0`, pushed to main
+- [x] Step 8: Re-run after IP block cleared — **29 passed, 3 skipped** on both projects; `cart.add_pdp` + `cart.entries` now observed GREEN locally (desktop + mobile)
+- [x] Step 9: Consolidated duplicate `reachable.spec.js` into `smoke.spec.js` (commit `985a74d`)
 
 ---
 
 ## Completed
 
-- **Chunk 7 (remaining storefront checks):** `tests/storefront/rules.spec.js`, `quick-links.spec.js`, `video.spec.js`, `stock.spec.js`, `cart.spec.js`; Cloudflare-bypass rework of `smoke.spec.js` + cart helpers; `config/monitor.config.js` quickLinks corrected to the 3 real footer policy links (commit `ab080f0`)
+- **Chunk 7 (remaining storefront checks):** `tests/storefront/rules.spec.js`, `quick-links.spec.js`, `video.spec.js`, `stock.spec.js`, `cart.spec.js`; Cloudflare-bypass rework of `smoke.spec.js` + cart helpers; `config/monitor.config.js` quickLinks corrected to the 3 real footer policy links (commit `ab080f0`). **Cart checks verified GREEN locally** (29 passed / 3 skipped, both projects) once the test-IP Cloudflare block cleared. **Consolidated** duplicate `reachable.spec.js` → `smoke.spec.js` (title + Liquid-error assertions merged; commit `985a74d`)
 - **Chunk 6 (giveaway changelog):** Snapshot diffing, daily-rotation staleness tracking, Markdown changelog, Telegram digest integration, config + CI runner, unit tests (24 new), commit-back step — **verified live in CI** (two `chore(giveaway): update changelog [skip ci]` commits on main)
 - **Chunk 5 (nav):** nav.hamburger (mobile drawer open/close)
 - **Chunk 4 (core storefront checks):** store.reachable, home.sections, product.sections, announcement.correct, timer.correct, flash.banners, product.giveaway_images (7 checks, 2 Playwright projects)
@@ -54,9 +56,10 @@
 
 ## Open Items
 
-- **Chunk 7 verification is incomplete and must be finished in CI, not locally.** Repeated local `/cart/add.js` probing tripped Cloudflare's IP-level protection, which then began 429ing even plain GET navigations (`/policies/privacy-policy`). `cart.add_pdp` / `cart.entries` have **never been observed passing**; the fixes are correct by code inspection only. Verify via `workflow_dispatch` from a clean CI IP before trusting these two checks.
+- ~~**Chunk 7 cart checks never observed passing**~~ — **RESOLVED 2026-10-08.** Once the local test-IP Cloudflare block expired, the full suite ran **29 passed / 3 skipped**, with `cart.add_pdp` and `cart.entries` green on both `desktop-chrome` and `mobile`. Still worth one `workflow_dispatch` run to confirm from a CI IP, but the fixes are now empirically validated, not inspection-only.
+- **Cart checks are rate-limit sensitive by nature.** They passed from a cooled-off IP; a burst of hourly runs plus any manual re-runs could still trip `/cart/add.js` protection. If these two checks start flapping in CI, the mitigation is to move them to a lower-frequency cron rather than loosening the assertions.
 - Confirm the three secrets are repo-scoped: `SHOPIFY_STOREFRONT_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
-- Three giveaway field keys still inferred, not verified: `flash_giveaway_desktop_banner`, `flash_giveaway_mobile_banner`, `pdp_images` (confirmed: `flash_giveaway_end_date`). Confirm via the `Live field keys:` log line on a `workflow_dispatch` run.
+- Three giveaway field keys still inferred, not verified: `flash_giveaway_desktop_banner`, `flash_giveaway_mobile_banner`, `pdp_images` (confirmed: `flash_giveaway_end_date`). User shared admin screenshots (2026-10-08) showing the *display labels* — "Overlap Desktop Banner", "Overlap Mobile Banner", "PDP Images" — but **the display label is not the API key**. Need the **Key** column from Settings → Custom data → Metaobjects → definition, or the `Live field keys:` log line from a `workflow_dispatch` run.
 - `stock.all` skips without `SHOPIFY_STOREFRONT_TOKEN`; it has never run green against live data
 - claude-mem memory observer is signed out (since 2026-10-07T00:32:45Z) — needs `/login`; nothing is being remembered across sessions
 
