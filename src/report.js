@@ -93,25 +93,34 @@ if (events.length > 0) {
   console.log('No state transitions or reminders. Skipping incident alert.');
 }
 
+// Send giveaway rotation updates as alerts (independent of incident state transitions and trigger type).
+// On cron runs: this is the only giveaway notification. On manual runs: in addition to the digest.
+// Compute once and reuse in the manual-digest block below.
+let giveawayChangeBlock = null;
+if (fs.existsSync(giveawayChangesPath)) {
+  try {
+    const giveawayChanges = JSON.parse(fs.readFileSync(giveawayChangesPath, 'utf8'));
+    // isFirstRun is flagged so we omit the "no baseline yet" non-change on all runs.
+    if (!giveawayChanges.isFirstRun && giveawayChanges.changes?.length > 0) {
+      giveawayChangeBlock = formatChangesForTelegram(giveawayChanges.changes);
+      if (giveawayChangeBlock) {
+        await dispatch(giveawayChangeBlock, 'Giveaway update');
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to parse telemetry/giveaway-changes.json:', err.message);
+  }
+}
+
 // On a manual/local run, additionally send a full status digest of every
 // check, even when nothing changed — this is the "full test report".
 if (isManualRun) {
   let statusReport = formatStatusMessage({ checks: aggregated, traceId: results.traceId, runUrl });
 
-  // If the giveaway check logged changes, append the old→new pairs to the manual digest.
-  if (fs.existsSync(giveawayChangesPath)) {
-    try {
-      const giveawayChanges = JSON.parse(fs.readFileSync(giveawayChangesPath, 'utf8'));
-      // isFirstRun is flagged so the digest omits the "no baseline yet" non-change.
-      if (!giveawayChanges.isFirstRun && giveawayChanges.changes?.length > 0) {
-        const changeBlock = formatChangesForTelegram(giveawayChanges.changes);
-        if (changeBlock) {
-          statusReport += changeBlock;
-        }
-      }
-    } catch (err) {
-      console.warn('Failed to parse telemetry/giveaway-changes.json:', err.message);
-    }
+  // If giveaway changes were already computed and dispatched above, append them to the digest too
+  // so the operator can see both the alert and the full context in the manual report.
+  if (giveawayChangeBlock) {
+    statusReport += giveawayChangeBlock;
   }
 
   await dispatch(statusReport, 'Manual status report');

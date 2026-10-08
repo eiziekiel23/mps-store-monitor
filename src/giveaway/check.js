@@ -25,7 +25,10 @@ import {
   renderMarkdown
 } from './changelog.js';
 
-const CHECK_ID = 'giveaway.updated_daily';
+// Must match the ID in src/alerting/labels.js (CHECK_LABELS + the "Giveaway"
+// group) exactly, or this check falls into the "Other" catch-all on the status
+// board. README.md and the unit tests reference this same string.
+const CHECK_ID = 'giveaway.freshness';
 const STATE_PATH = path.resolve('state/giveaway-snapshot.json');
 const CHANGELOG_PATH = path.resolve('CHANGELOG-giveaways.md');
 const RESULT_PATH = path.resolve('telemetry/giveaway-result.json');
