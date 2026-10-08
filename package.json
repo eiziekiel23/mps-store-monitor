@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "test": "playwright test",
-    "test:unit": "node --test tests/unit/**/*.test.js"
+    "test:unit": "node --test tests/unit/**/*.test.js",
+    "allowlist": "node scripts/update-allowlist.js"
   },
   "devDependencies": {
     "@playwright/test": "^1.48.0"
