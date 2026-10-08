@@ -185,7 +185,14 @@ export async function sendTelegram({ token, chatId, text, dryRun = false }) {
       continue;
     }
 
-    // Unrecoverable or second failure
-    throw new Error(`Telegram API Error: ${res.status} ${res.statusText}`);
+    // Unrecoverable or second failure — include the full response body so the
+    // CI log shows Telegram's description (e.g. "chat not found", "can't parse entities").
+    // Guard the json() call: a malformed response must never mask the real HTTP error.
+    let desc = '';
+    try {
+      const errBody = await res.json();
+      if (errBody?.description) desc = ` — ${errBody.description}`;
+    } catch { /* body unavailable or not JSON — fall back to status text */ }
+    throw new Error(`Telegram API Error: ${res.status} ${res.statusText}${desc}`);
   }
 }

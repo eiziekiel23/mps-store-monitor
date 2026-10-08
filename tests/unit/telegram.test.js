@@ -231,7 +231,8 @@ describe('alerting/telegram - sendTelegram', () => {
     globalThis.fetch = async () => ({
       ok: false,
       status: 401,
-      statusText: 'Unauthorized'
+      statusText: 'Unauthorized',
+      json: async () => ({ error_code: 401, description: 'Unauthorized' })
     });
 
     await assert.rejects(
