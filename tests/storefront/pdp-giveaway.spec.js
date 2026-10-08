@@ -16,9 +16,24 @@ test.describe('Product Page Giveaway Brand', () => {
       const count = await locator.count();
       expect(count, `Giveaway banner images not found on ${handle}`).toBeGreaterThan(0);
 
+      // Scroll to trigger lazy-load for off-screen images, then give the
+      // browser a moment to decode them before checking naturalWidth.
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await page.waitForTimeout(2000);
+      await page.evaluate(() => window.scrollTo(0, 0));
+
+      // Only flag images that are currently *displayed* (visible in the layout)
+      // but failed to load. Off-screen images hidden via CSS (display:none or
+      // zero-size) are skipped — those are responsive variants not active at
+      // this viewport and will never have a naturalWidth until shown.
       const broken = await locator.evaluateAll((imgs) =>
         imgs
-          .filter((img) => !img.currentSrc || img.naturalWidth === 0)
+          .filter((img) => {
+            const r = img.getBoundingClientRect();
+            const cs = window.getComputedStyle(img);
+            const displayed = cs.display !== 'none' && cs.visibility !== 'hidden' && r.width > 0;
+            return displayed && (!img.currentSrc || img.naturalWidth === 0);
+          })
           .map((img) => img.getAttribute('src') || '(no src)')
       );
 
