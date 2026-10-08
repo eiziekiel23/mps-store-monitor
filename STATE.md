@@ -1,7 +1,7 @@
 # MPS Store Monitor — Chunked Work State
 
 **Repo:** `/mnt/d/mps-store-monitor` (public GitHub repo)  
-**Last updated:** 2026-10-08 (Chunk 7 awaiting review — cart checks now verified green)  
+**Last updated:** 2026-10-08 (Chunk 8 🟡 awaiting review — checkout checks verified green locally)  
 **Chunked workflow:** 5-7 steps per chunk, update after every step, checkpoint + approval between chunks.
 
 ---
@@ -11,9 +11,18 @@
 | Chunk | Status | Focus |
 |-------|--------|-------|
 | **6 (giveaway changelog)** | ✅ done | Giveaway freshness tracking, daily rotation detection, Markdown + Telegram rendering |
-| **7 (remaining storefront checks)** | 🟡 awaiting review | Five remaining checks: nav.rules, nav.quick_links, video.how_to_enter, stock.all, cart.add_pdp + cart.entries |
+| **7 (remaining storefront checks)** | ✅ done | Five remaining checks: nav.rules, nav.quick_links, video.how_to_enter, stock.all, cart.add_pdp + cart.entries |
+| **8 (checkout extension monitoring)** | 🟡 awaiting review | Entry count, bonus entries, trust badge checks against the live Shopify checkout |
 
-### Chunk 7 Steps
+### Chunk 8 Steps
+
+- [x] Step 1: Inspect `/mnt/d/shopify-app-react` checkout extension source — found real rendered text strings and selector; no data-testids used
+- [x] Step 2: Spike — navigated live `/checkout` with seeded cart; extensions confirmed rendering; captured real values (PRODUCT 4,849 + BONUS 5,000 = TOTAL 9,849)
+- [x] Steps 3-5 (consolidated): `tests/checkout/extensions.spec.js` — one serial file sharing a single seeded cart (1 ATC/project instead of 3 separate specs × 3 ATCs each). Three annotated checks: `checkout.entries`, `checkout.bonus_entries`, `checkout.trust_badge`. **Deviation from plan: 3 files → 1 file for rate-limit safety (disclosed).**
+- [x] Step 6: CI integration (zero workflow changes needed — testDir auto-discovers; data-driven pipeline handles new check IDs). Full suite verified: **35 passed, 3 skipped** in serial CI mode. Reporter emitted 6 checkout rows; aggregation deduped to 3 checks, all `passed`, 0 `failed`.
+- [x] Step 7: Checkpoint — awaiting review.
+
+### Chunk 7 Steps (done)
 
 - [x] Step 1: nav.rules spec (official rules page reachable + heading/body)
 - [x] Step 2: nav.quick_links spec (footer quick links validation)
@@ -29,6 +38,7 @@
 
 ## Completed
 
+- **Chunk 8 (checkout extension monitoring):** `tests/checkout/extensions.spec.js` — serial serial file with `checkout.entries` (entries banner self-consistency + /cart.js data-binding), `checkout.bonus_entries` (timer ↔ banner cross-extension agreement), `checkout.trust_badge` (alt-text attachment + naturalWidth load). Key finding: Shopify wraps `header.render-after` extensions in an aria-hidden container — fixed by `toBeAttached()` + `textContent` instead of `toBeVisible()` + `innerText`. Full suite **35 passed / 3 skipped** (serial CI mode, both projects). Reporter end-to-end verified: 38 raw → 18 deduped, 0 failed. (pending commit)
 - **Chunk 7 (remaining storefront checks):** `tests/storefront/rules.spec.js`, `quick-links.spec.js`, `video.spec.js`, `stock.spec.js`, `cart.spec.js`; Cloudflare-bypass rework of `smoke.spec.js` + cart helpers; `config/monitor.config.js` quickLinks corrected to the 3 real footer policy links (commit `ab080f0`). **Cart checks verified GREEN locally** (29 passed / 3 skipped, both projects) once the test-IP Cloudflare block cleared. **Consolidated** duplicate `reachable.spec.js` → `smoke.spec.js` (title + Liquid-error assertions merged; commit `985a74d`)
 - **Chunk 6 (giveaway changelog):** Snapshot diffing, daily-rotation staleness tracking, Markdown changelog, Telegram digest integration, config + CI runner, unit tests (24 new), commit-back step — **verified live in CI** (two `chore(giveaway): update changelog [skip ci]` commits on main)
 - **Chunk 5 (nav):** nav.hamburger (mobile drawer open/close)
@@ -45,6 +55,8 @@
 - **Booster Theme ATC is a `<div>`, not a `<button>`:** selector is `form.shopify-product-form .btn-atc-pdp`. `getByRole('button')` returns 0 matches; the `<button name="add">` elements are hidden mobile sticky-bar duplicates.
 - **Cart-mutation endpoints are specially protected.** `/cart/add.js` and `/cart/clear.js` 429 far more aggressively than GETs (anti-scalper protection, appropriate for a limited-stock giveaway store). Two distinct 429 bodies observed: Shopify JSON `too_many_requests`, and Cloudflare's HTML challenge page.
 - **Decision (user, 2026-10-08):** keep `cart.add_pdp` / `cart.entries` on the **hourly** cron as originally planned, accepting the rate-limit and any inventory-reservation exposure.
+- **Shopify checkout header.render-after extensions are aria-hidden.** Shopify wraps `purchase.checkout.header.render-after` extensions in a `<status>` container that Playwright's visibility algorithm treats as hidden. Use `toBeAttached()` (not `toBeVisible()`) to wait for render, and `document.body.textContent` (not `innerText`) to read extension text.
+- **Checkout checks consolidated to one serial file** (not one file per check) to limit add-to-cart calls against anti-scalper rate limits. 1 ATC call per project per run instead of 3.
 - Playwright tests run on `desktop-chrome` and `mobile` projects; checks are deduplicated (worst-status-wins); `skipped` never alerts
 - Daily giveaway rotation anchor: 02:00 America/Chicago with 1h grace; staleness if no rotation fields change by ~03:00
 - Incident reminder cooldown: 60 minutes for persistent failures
@@ -67,4 +79,4 @@
 
 ## Next Step
 
-**Chunk 8 (pending approval):** trigger a `workflow_dispatch` CI run to (a) confirm `cart.add_pdp` / `cart.entries` pass from a clean IP, (b) confirm the three inferred giveaway field keys, (c) confirm `stock.all` runs green with the storefront token, then proceed to the remaining checkout checks per the 8-chunk roadmap.
+**After Chunk 8 approval:** trigger a `workflow_dispatch` CI run to (a) confirm all checks (including checkout) pass from a clean CI IP, (b) confirm the three inferred giveaway field keys via the `Live field keys:` log line, (c) confirm `stock.all` runs green with the storefront token.
