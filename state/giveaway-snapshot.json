@@ -4,9 +4,9 @@
     "bonus_entries_in_copy_on_theme": "false",
     "custom_block_text": "Today's Flash Giveaways and",
     "end_date": "November 2, 2026 02:00:00",
-    "flash_giveaway_desktop_banner": "https://cdn.shopify.com/s/files/1/0640/9381/5021/files/DESKTOP_-_Oct_8_2026.webp?v=1791442692",
-    "flash_giveaway_end_date": "October 9, 2026 02:00:00",
-    "flash_giveaway_mobile_banner": "https://cdn.shopify.com/s/files/1/0640/9381/5021/files/MOBILE_-_Oct_8_2026.webp?v=1791442693",
+    "flash_giveaway_desktop_banner": "https://cdn.shopify.com/s/files/1/0640/9381/5021/files/DESKTOP_-_Oct_9_2026.webp?v=1791529184",
+    "flash_giveaway_end_date": "October 10, 2026 02:00:00",
+    "flash_giveaway_mobile_banner": "https://cdn.shopify.com/s/files/1/0640/9381/5021/files/MOBILE_-_Oct_9_2026.webp?v=1791529188",
     "flash_giveaway_start_date": "November 24, 2025 00:00:01",
     "flash_giveaway_timer_copy": "GIVEAWAYS END IN:",
     "giveaway_timer_copy": "GIVEAWAY ENDS IN:",
@@ -14,7 +14,7 @@
     "mps_announcement_bar_texts": "[\"Today’s Deal: $20 Discount + FREE Golden Ticket to WIN $60,000! Code: J20\",\"BBG26 Winner: Djamie Estacio of Santa Rosa, California! She chose $60,000 cash!\"]",
     "mps_homepage_announcement_bar_texts": "[\"Today’s Deal: $20 Discount + FREE Golden Ticket to WIN $60,000! Code: J20\",\"BBG26 Winner: Djamie Estacio of Santa Rosa, California! She chose $60,000 cash!\"]",
     "number": "27",
-    "pdp_images": "[\"gid://shopify/MediaImage/46120682750189\",\"gid://shopify/MediaImage/46120682782957\"]",
+    "pdp_images": "[\"gid://shopify/MediaImage/46151603618029\",\"gid://shopify/MediaImage/46151603716333\"]",
     "prize_text": "BBG27: $60,000 or 1999 Pokémon Box +$10k",
     "show_timer_progress_bar": "false",
     "start_date": "September 25, 2026 00:00:01",
@@ -22,9 +22,35 @@
     "video_url": "https://cdn.shopify.com/videos/c/o/v/fb817b0f3da742ceb9a595313d78518e.mp4",
     "vip_order_protection_multiplier": "25"
   },
-  "lastRotationMs": 1791447892311,
-  "updatedAt": "2026-10-09T02:57:51.074Z",
+  "lastRotationMs": 1791540927492,
+  "updatedAt": "2026-10-09T10:15:27.492Z",
   "entries": [
+    {
+      "at": "2026-10-09T10:15:27.492Z",
+      "rotated": true,
+      "changes": [
+        {
+          "field": "flash_giveaway_desktop_banner",
+          "old": "https://cdn.shopify.com/s/files/1/0640/9381/5021/files/DESKTOP_-_Oct_8_2026.webp?v=1791442692",
+          "new": "https://cdn.shopify.com/s/files/1/0640/9381/5021/files/DESKTOP_-_Oct_9_2026.webp?v=1791529184"
+        },
+        {
+          "field": "flash_giveaway_end_date",
+          "old": "October 9, 2026 02:00:00",
+          "new": "October 10, 2026 02:00:00"
+        },
+        {
+          "field": "flash_giveaway_mobile_banner",
+          "old": "https://cdn.shopify.com/s/files/1/0640/9381/5021/files/MOBILE_-_Oct_8_2026.webp?v=1791442693",
+          "new": "https://cdn.shopify.com/s/files/1/0640/9381/5021/files/MOBILE_-_Oct_9_2026.webp?v=1791529188"
+        },
+        {
+          "field": "pdp_images",
+          "old": "[\"gid://shopify/MediaImage/46120682750189\",\"gid://shopify/MediaImage/46120682782957\"]",
+          "new": "[\"gid://shopify/MediaImage/46151603618029\",\"gid://shopify/MediaImage/46151603716333\"]"
+        }
+      ]
+    },
     {
       "at": "2026-10-08T08:24:52.311Z",
       "rotated": true,
