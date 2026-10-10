@@ -1,5 +1,5 @@
 import { parseGiveawayDate } from '../snapshot.js';
-import { escapeMd } from '../alerting/telegram.js';
+import { escapeHtml } from '../alerting/telegram.js';
 
 /**
  * Flash-giveaway changelog + daily-rotation freshness.
@@ -247,19 +247,26 @@ export function renderMarkdown(entries = [], { limit = 60 } = {}) {
 }
 
 /**
- * Render the current run's changes as a Telegram Markdown block for the digest.
+ * Render the current run's changes as a Telegram HTML block for the digest.
  * Returns null when nothing changed, so callers can omit the section entirely.
+ *
+ * Must stay in the same parse mode as src/alerting/telegram.js — report.js
+ * concatenates this block onto the manual-run digest, so a mismatch would make
+ * Telegram reject the whole message.
  */
 export function formatChangesForTelegram(changes = []) {
   if (!changes.length) return null;
 
-  const lines = ['\n🎁 *GIVEAWAY CHANGES*'];
+  const lines = ['\n🎁 <b>GIVEAWAY CHANGES</b>'];
   for (const c of changes) {
-    lines.push(`• \`${c.field}\``);
-    // Metaobject values are arbitrary (banner filenames, URLs, product names) and
-    // routinely contain underscores — escapeMd keeps them from breaking the `_..._`
-    // italic spans and getting the whole message rejected with HTTP 400.
-    lines.push(`  _${escapeMd(truncate(c.old, 48) || '—')}_ → _${escapeMd(truncate(c.new, 48) || '—')}_`);
+    lines.push(`• <code>${escapeHtml(c.field)}</code>`);
+    // Metaobject values are arbitrary (banner filenames, URLs, product names).
+    // Under HTML parse mode the underscores and asterisks they routinely contain
+    // are inert; only &, < and > need neutralising, and escapeHtml is valid even
+    // inside the <i> span (unlike legacy-Markdown backslash escapes, which are not).
+    lines.push(
+      `  <i>${escapeHtml(truncate(c.old, 48) || '—')}</i> → <i>${escapeHtml(truncate(c.new, 48) || '—')}</i>`
+    );
   }
   return lines.join('\n');
 }

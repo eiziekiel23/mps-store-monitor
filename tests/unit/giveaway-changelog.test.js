@@ -259,11 +259,13 @@ describe('giveaway/changelog - rendering', () => {
     assert.equal(formatChangesForTelegram([]), null);
   });
 
-  test('formatChangesForTelegram renders old → new pairs', () => {
+  test('formatChangesForTelegram renders old → new pairs in HTML format', () => {
     const txt = formatChangesForTelegram(entries[0].changes);
-    assert.match(txt, /🎁 \*GIVEAWAY CHANGES\*/);
-    assert.match(txt, /`flash_giveaway_end_date`/);
+    assert.match(txt, /🎁 <b>GIVEAWAY CHANGES<\/b>/);
+    assert.match(txt, /<code>flash_giveaway_end_date<\/code>/);
     assert.match(txt, /→/);
+    assert.match(txt, /<i>2026-10-06 23:59:00<\/i>/);
+    assert.match(txt, /<i>2026-10-07 23:59:00<\/i>/);
   });
 
   test('truncate shortens long values but leaves short ones intact', () => {
