@@ -6,7 +6,9 @@ import {
   DAILY_REPORT_HOUR,
   getHourStamp,
   shouldSendHourlyStatusReport,
-  resolveIsManualRun
+  resolveIsManualRun,
+  shouldRunGiveawaySwap,
+  GIVEAWAY_SWAP_HOUR
 } from '../../src/schedule.js';
 
 describe('schedule: giveaway daily report', () => {
@@ -302,6 +304,85 @@ describe('schedule: giveaway daily report', () => {
           `"${value}" should not be mistaken for "scheduled"`
         );
       }
+    });
+  });
+
+  describe('shouldRunGiveawaySwap', () => {
+    // 2026-07-15 06:00 UTC = 01:00 CDT (before GIVEAWAY_SWAP_HOUR)
+    const cdt1am = new Date('2026-07-15T06:00:00Z');
+    // 2026-07-15 07:00 UTC = 02:00 CDT (at GIVEAWAY_SWAP_HOUR)
+    const cdt2am = new Date('2026-07-15T07:00:00Z');
+    // 2026-07-15 08:00 UTC = 03:00 CDT (after GIVEAWAY_SWAP_HOUR)
+    const cdt3am = new Date('2026-07-15T08:00:00Z');
+    const cdtDate = '2026-07-15';
+
+    it('GIVEAWAY_SWAP_HOUR is 2 (02:00 Chicago)', () => {
+      assert.equal(GIVEAWAY_SWAP_HOUR, 2);
+    });
+
+    it('returns false when hour < GIVEAWAY_SWAP_HOUR (01:00 CDT)', () => {
+      assert.equal(
+        shouldRunGiveawaySwap({ stamp: '', now: cdt1am }),
+        false
+      );
+    });
+
+    it('returns true at GIVEAWAY_SWAP_HOUR (02:00 CDT) with empty/no prior stamp', () => {
+      assert.equal(
+        shouldRunGiveawaySwap({ stamp: '', now: cdt2am }),
+        true
+      );
+    });
+
+    it('returns true after GIVEAWAY_SWAP_HOUR with a stale stamp from yesterday', () => {
+      assert.equal(
+        shouldRunGiveawaySwap({ stamp: '2026-07-14', now: cdt3am }),
+        true,
+        'should swap when stamp is from a previous day'
+      );
+    });
+
+    it('returns false when stamp matches today (already swapped this day)', () => {
+      assert.equal(
+        shouldRunGiveawaySwap({ stamp: cdtDate, now: cdt3am }),
+        false,
+        'should not re-swap if today\'s swap already fired'
+      );
+    });
+
+    it('self-heals: a later tick still swaps if an earlier tick was missed', () => {
+      assert.equal(
+        shouldRunGiveawaySwap({ stamp: '2026-07-14', now: cdt3am }),
+        true,
+        'stale stamp means the 02:00 tick was missed, 03:00 should still fire'
+      );
+    });
+
+    it('has no isManualRun bypass — unlike the report gate, every caller respects the gate', () => {
+      // The swap mutates live storefront data, so (per design) a manual
+      // workflow_dispatch does NOT skip the 02:00 Chicago gate the way
+      // shouldSendDailyGiveawayReport's isManualRun does. Passing an
+      // isManualRun-shaped key has no effect — the function doesn't accept one.
+      assert.equal(
+        shouldRunGiveawaySwap({ stamp: cdtDate, now: cdt1am, isManualRun: true }),
+        false,
+        'gate stays closed before 02:00 regardless of any manual flag'
+      );
+      assert.equal(
+        shouldRunGiveawaySwap({ stamp: cdtDate, now: cdt3am, isManualRun: true }),
+        false,
+        'gate stays closed once already stamped today, regardless of any manual flag'
+      );
+    });
+
+    it('DST: 02:00 CST (winter) gates the same as 02:00 CDT (summer)', () => {
+      // 2026-01-15 08:00 UTC = 02:00 CST (UTC-6, no DST)
+      const cst2am = new Date('2026-01-15T08:00:00Z');
+      assert.equal(
+        shouldRunGiveawaySwap({ stamp: '', now: cst2am }),
+        true,
+        'gate should open at 02:00 local time regardless of DST offset'
+      );
     });
   });
 });

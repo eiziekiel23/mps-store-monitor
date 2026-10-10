@@ -295,6 +295,63 @@ export function formatStatusMessage({ checks = [], traceId, runUrl, title = 'Sta
 }
 
 /**
+ * Format the daily giveaway value swap result into a Telegram message.
+ * Called by src/giveaway/swap.js on completion (success or error).
+ *
+ * Every field value is user-supplied data (metaobject fields), so escapeHtml
+ * is essential — a field's value might contain HTML entities that would break
+ * Telegram's parser if not escaped.
+ */
+export function formatSwapMessage({ swapped, previousValues = {}, newValues = {}, reason, error }) {
+  if (error) {
+    // Swap failed — report the error.
+    const lines = [
+      '<b>🔴 MPS Giveaway Swap — FAILED</b>',
+      `<i>${escapeHtml(error)}</i>`
+    ];
+    return clampMessage(lines.join('\n'));
+  }
+
+  if (reason === 'nothing-staged') {
+    // Gate fired but no staged values; not an error, just a note.
+    const lines = [
+      '<b>⚠️ MPS Giveaway Swap — Nothing Staged</b>',
+      '<i>Gate opened at 02:00 Chicago, but no upcoming fields to promote. Operator may have forgotten to stage values.</i>'
+    ];
+    return clampMessage(lines.join('\n'));
+  }
+
+  if (reason === 'gate-not-open') {
+    // Gate hasn't fired yet (e.g., before 02:00). Should not be sent as a Telegram alert at all.
+    return null;
+  }
+
+  if (swapped.length === 0) return null; // Edge case, shouldn't happen.
+
+  // Success: fields were promoted.
+  const lines = [
+    `<b>✅ MPS Giveaway Swap — ${swapped.length} fields updated</b>`
+  ];
+
+  for (const key of swapped) {
+    const prev = previousValues[key] ?? '(not set)';
+    const next = newValues[key] ?? '(cleared)';
+
+    // Truncate very long values (e.g., JSON arrays) for readability.
+    const prevShort = typeof prev === 'string' && prev.length > 60 ? `${prev.slice(0, 60)}…` : prev;
+    const nextShort = typeof next === 'string' && next.length > 60 ? `${next.slice(0, 60)}…` : next;
+
+    const keyName = escapeHtml(key);
+    const prevEsc = escapeHtml(String(prevShort));
+    const nextEsc = escapeHtml(String(nextShort));
+
+    lines.push(`• <code>${keyName}</code>\n  <i>${prevEsc}</i> → <i>${nextEsc}</i>`);
+  }
+
+  return clampMessage(lines.join('\n'));
+}
+
+/**
  * Sends an HTML-formatted message to a Telegram chat, handling 429
  * rate limits according to the Retry-After header/body.
  */

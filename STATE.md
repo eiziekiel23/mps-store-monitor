@@ -1,7 +1,7 @@
 # STATE.md — MPS Store Monitor — Chunked Work State
 
 **Repo:** `/mnt/d/mps-store-monitor` (public GitHub repo)  
-**Last updated:** 2026-10-10 (15-min cron resilience + hourly digest gate)  
+**Last updated:** 2026-10-10 (Chunk 11.2 — giveaway swap logic, awaiting review)  
 **Chunked workflow:** 5-7 steps per chunk, update after every step, checkpoint + approval between chunks.
 
 ---
@@ -15,6 +15,44 @@
 | **8 (checkout extension monitoring)** | ✅ done | Entry count, bonus entries, trust badge checks against the live Shopify checkout |
 | **9 (Admin API inventory integration)** | ✅ done | Replace Storefront-API-only `stock.all` with real inventory data (inventoryPolicy, availableForSale) via Shopify Admin API; DENY-only alert rule + knownSoldOut allowlist |
 | **10 (burn-in & go-live)** | ✅ done | CI verification prep, operator docs (README), allowlist-refresh tooling, Telegram routing verification |
+| **11.1 (upcoming metaobject)** | ✅ done | Create separate `upcoming_flash_giveaway` metaobject type + entry for pre-staging daily giveaway values |
+| **11.2 (swap logic)** | 🟡 awaiting review | 02:00-Chicago DST-aware gate, Admin API metaobject read/write, swap+clear module, Telegram alert, 17 new unit tests |
+| **11.3 (workflow wiring)** | ⬜ not started | `giveaway-swap.yml`, gated fallback in `monitor.yml`, cron-job.org 02:00 Chicago job, live swap verification |
+
+---
+
+### Chunk 11 — Upcoming Giveaway Auto-Swap (user request, 2026-10-10)
+
+**Goal:** operator pre-stages tomorrow's daily flash giveaway values; a cron job promotes them into the live
+`giveaway` metaobject at exactly 02:00 America/Chicago (= 15:00 Manila), auto-adjusting for DST.
+
+#### Chunk 11.2 Steps
+
+- [x] Step 1: `src/schedule.js` — added `GIVEAWAY_SWAP_HOUR = 2` and `shouldRunGiveawaySwap({ stamp, now })`.
+      Deliberately has **no `isManualRun` bypass** (unlike `shouldSendDailyGiveawayReport`): the swap mutates live
+      storefront data, so a manual `workflow_dispatch` must still respect the 02:00 gate. (User chose "the default".)
+- [x] Step 2: `src/admin.js` — added `fetchMetaobjectByHandle()` (returns `{id, handle, type, fields, fieldMap}` or
+      `null`) and `updateMetaobjectFields()` (writes only the named keys, raises `userErrors` as exceptions). Both
+      reuse the existing `adminGql` helper + injectable fetcher. 401 message generalised from "missing read_products
+      scope" to "insufficient scopes for this operation" now that the client does more than read products.
+- [x] Step 3: Recon — compared the staging definition against the live `giveaway` definition. Found
+      `flash_giveaway_start_date` missing from staging (Chunk 11.1 created only 7 of the 8 daily fields); added it via
+      an additive `metaobjectDefinitionUpdate`. **All 8 daily fields now type-match live**, so the swap is a verbatim
+      key→value copy with no per-type serialization.
+- [x] Step 4: `src/alerting/telegram.js` — added `formatSwapMessage()` (HTML parse mode, `escapeHtml` on every
+      interpolated field value; success / nothing-staged / error variants; values >60 chars truncated).
+- [x] Step 5: `src/giveaway/swap.js` (new) — `runGiveawaySwap()` promotes all non-empty staged fields into the live
+      entry, then clears them on the staging entry (`value: null`). CLI runner with `--dry-run`, stamp at
+      `state/giveaway-swap-date.txt`, Telegram dispatch. CLI wrapped in an ESM `isMain` guard
+      (`process.argv[1] === fileURLToPath(import.meta.url)`) so importing it in tests does not trigger `process.exit`.
+- [x] Step 6: Tests — `tests/unit/giveaway-swap.test.js` (9 tests: gate-closed, nothing-staged, missing staging entry,
+      full swap+clear happy path, same-day idempotency, stale-stamp self-heal, missing live entry, `userErrors`,
+      stamp-only-on-success) + 8 new `shouldRunGiveawaySwap` tests in `tests/unit/schedule.test.js` (incl. DST:
+      02:00 CST gates identically to 02:00 CDT). **134/134 unit tests pass** (was 117).
+- [x] Step 7: Live dry-run — `node src/giveaway/swap.js --dry-run` against the real store: auth OK (no 401), staging
+      handle `upcoming-flash-giveaway` resolved, gate correctly OPEN (05:58 CDT, no stamp), result `nothing-staged`
+      (entry exists but no values staged yet), **no stamp written**. Confirms the read path end-to-end.
+- [ ] Step 8: Checkpoint — awaiting user approval before Chunk 11.3.
 
 ---
 

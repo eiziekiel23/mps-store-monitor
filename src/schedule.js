@@ -82,6 +82,44 @@ export function shouldSendDailyGiveawayReport({ isManualRun, stamp, now }) {
   return stamp !== date;
 }
 
+/** America/Chicago hour at-or-after which the daily giveaway swap may fire. */
+export const GIVEAWAY_SWAP_HOUR = 2;
+
+/**
+ * Decide whether the daily giveaway value-swap should run now.
+ *
+ * Returns true when the current hour in America/Chicago is ≥ GIVEAWAY_SWAP_HOUR
+ * AND `stamp` does not already match today's Central date (one swap per day).
+ *
+ * WHY NO isManualRun BYPASS (unlike shouldSendDailyGiveawayReport)
+ * ----------------------------------------------------------------
+ * The daily *report* is read-only and safe to re-send on demand, so it bypasses
+ * the time gate for manual runs. The *swap* MUTATES the live giveaway entry —
+ * promoting the staged upcoming values into the customer-facing fields. Firing
+ * it early (an operator clicking "Run workflow" at noon) would leak tomorrow's
+ * giveaway hours before its start. By design every caller — native cron, the
+ * external scheduler, and a human dispatch alike — is held to the 2 AM Central
+ * gate. 2 AM Central is 3 PM Manila and auto-adjusts for DST via getCentralTime.
+ *
+ * The date-stamp (not `hour === 2`) keeps it idempotent and self-healing: the
+ * hourly external scheduler's first tick at/after 02:00 Central swaps, the rest
+ * of the day's ticks find a matching stamp and no-op; a missed 02:00 tick is
+ * recovered by the 03:00 tick because the stamp is still yesterday's date.
+ *
+ * Pure (no I/O) — the caller reads the stamp from disk and writes it back only
+ * after a swap actually completes.
+ *
+ * @param {{ stamp: string, now?: Date }} opts
+ * @param {string}   opts.stamp - last-swapped date as YYYY-MM-DD Central, or ''
+ * @param {Date}    [opts.now]  - injectable for unit tests
+ * @returns {boolean}
+ */
+export function shouldRunGiveawaySwap({ stamp, now }) {
+  const { date, hour } = getCentralTime(now);
+  if (hour < GIVEAWAY_SWAP_HOUR) return false;
+  return stamp !== date;
+}
+
 /**
  * Hour key used to throttle the status digest to one send per clock hour.
  *
