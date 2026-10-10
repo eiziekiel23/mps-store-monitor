@@ -4,6 +4,7 @@ import { applyRun } from './alerting/incidents.js';
 import { formatRunMessage, formatStatusMessage, sendTelegram } from './alerting/telegram.js';
 import { aggregateChecks } from './alerting/checks.js';
 import { formatChangesForTelegram } from './giveaway/changelog.js';
+import { shouldSendDailyGiveawayReport, getCentralTime, DAILY_REPORT_HOUR } from './schedule.js';
 
 // Parse command-line flags
 const dryRun = process.argv.includes('--dry-run');
@@ -14,6 +15,9 @@ const statePath = path.resolve('state/incidents.json');
 // directly rather than driving a browser.
 const giveawayResultPath = path.resolve('telemetry/giveaway-result.json');
 const giveawayChangesPath = path.resolve('telemetry/giveaway-changes.json');
+// Date-stamp for the daily giveaway report gate (3 AM America/Chicago, DST-aware).
+// Written after successful dispatch; read on the next run to prevent duplicate sends.
+const DAILY_REPORT_STAMP_PATH = path.resolve('state/daily-giveaway-report-date.txt');
 
 if (!fs.existsSync(resultsPath)) {
   console.error('No results.json found in telemetry/. Skipping report.');
@@ -83,6 +87,25 @@ async function dispatch(text, label) {
   }
 }
 
+/** Read the last date (YYYY-MM-DD Central) a daily giveaway report was sent, or '' if never. */
+function readDailyReportStamp() {
+  try {
+    return fs.existsSync(DAILY_REPORT_STAMP_PATH)
+      ? fs.readFileSync(DAILY_REPORT_STAMP_PATH, 'utf8').trim()
+      : '';
+  } catch (err) {
+    console.warn('Failed to read daily-report stamp, treating as unsent:', err.message);
+    return '';
+  }
+}
+
+/** Record today's Central date so later runs on the same day don't re-send. */
+function writeDailyReportStamp() {
+  const { date } = getCentralTime();
+  fs.mkdirSync(path.dirname(DAILY_REPORT_STAMP_PATH), { recursive: true });
+  fs.writeFileSync(DAILY_REPORT_STAMP_PATH, date, 'utf8');
+}
+
 // Alert on state transitions (new failures, recoveries, reminders).
 if (events.length > 0) {
   await dispatch(
@@ -103,12 +126,33 @@ if (fs.existsSync(giveawayChangesPath)) {
     // isFirstRun is flagged so we omit the "no baseline yet" non-change on all runs.
     if (!giveawayChanges.isFirstRun && giveawayChanges.changes?.length > 0) {
       giveawayChangeBlock = formatChangesForTelegram(giveawayChanges.changes);
-      if (giveawayChangeBlock) {
-        await dispatch(giveawayChangeBlock, 'Giveaway update');
-      }
     }
   } catch (err) {
     console.warn('Failed to parse telemetry/giveaway-changes.json:', err.message);
+  }
+}
+
+// Throttle the giveaway rotation report to ONE send per America/Chicago calendar
+// day, at or after DAILY_REPORT_HOUR local (DST-aware — see src/schedule.js).
+//
+// Diff detection above still runs every hour; only the Telegram dispatch is
+// gated. The store rotates at ~02:00 Central, so the first eligible run after
+// 03:00 carries the complete rotation rather than a partial one. Manual runs
+// bypass the gate entirely and never consume the day's slot, so an operator
+// can pull a digest on demand without suppressing the real morning report.
+if (giveawayChangeBlock) {
+  const stamp = readDailyReportStamp();
+  if (shouldSendDailyGiveawayReport({ isManualRun, stamp })) {
+    await dispatch(giveawayChangeBlock, 'Giveaway update');
+    if (!isManualRun) writeDailyReportStamp();
+  } else {
+    const { date, hour } = getCentralTime();
+    console.log(
+      `Giveaway changes detected, but outside the daily report window ` +
+      `(Central ${date} ${String(hour).padStart(2, '0')}:00, ` +
+      `window opens ${String(DAILY_REPORT_HOUR).padStart(2, '0')}:00, ` +
+      `last sent: ${stamp || 'never'}). Skipping dispatch.`
+    );
   }
 }
 
