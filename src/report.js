@@ -4,7 +4,13 @@ import { applyRun } from './alerting/incidents.js';
 import { formatRunMessage, formatStatusMessage, sendTelegram } from './alerting/telegram.js';
 import { aggregateChecks } from './alerting/checks.js';
 import { formatChangesForTelegram } from './giveaway/changelog.js';
-import { shouldSendDailyGiveawayReport, getCentralTime, DAILY_REPORT_HOUR } from './schedule.js';
+import {
+  shouldSendDailyGiveawayReport,
+  shouldSendHourlyStatusReport,
+  getCentralTime,
+  getHourStamp,
+  DAILY_REPORT_HOUR
+} from './schedule.js';
 
 // Parse command-line flags
 const dryRun = process.argv.includes('--dry-run');
@@ -18,6 +24,10 @@ const giveawayChangesPath = path.resolve('telemetry/giveaway-changes.json');
 // Date-stamp for the daily giveaway report gate (3 AM America/Chicago, DST-aware).
 // Written after successful dispatch; read on the next run to prevent duplicate sends.
 const DAILY_REPORT_STAMP_PATH = path.resolve('state/daily-giveaway-report-date.txt');
+// Hour-stamp for the status digest gate. The workflow runs every 15 minutes so
+// dropped GitHub cron ticks don't cost an hour of coverage; this keeps the
+// operator-facing digest at one per clock hour. See src/schedule.js.
+const HOURLY_STATUS_STAMP_PATH = path.resolve('state/hourly-status-report-hour.txt');
 
 if (!fs.existsSync(resultsPath)) {
   console.error('No results.json found in telemetry/. Skipping report.');
@@ -106,6 +116,24 @@ function writeDailyReportStamp() {
   fs.writeFileSync(DAILY_REPORT_STAMP_PATH, date, 'utf8');
 }
 
+/** Read the last UTC hour key ("YYYY-MM-DDTHH") a status digest was sent, or '' if never. */
+function readHourlyStatusStamp() {
+  try {
+    return fs.existsSync(HOURLY_STATUS_STAMP_PATH)
+      ? fs.readFileSync(HOURLY_STATUS_STAMP_PATH, 'utf8').trim()
+      : '';
+  } catch (err) {
+    console.warn('Failed to read hourly-status stamp, treating as unsent:', err.message);
+    return '';
+  }
+}
+
+/** Record the current UTC hour so the next three 15-min runs in the same hour skip the digest. */
+function writeHourlyStatusStamp() {
+  fs.mkdirSync(path.dirname(HOURLY_STATUS_STAMP_PATH), { recursive: true });
+  fs.writeFileSync(HOURLY_STATUS_STAMP_PATH, getHourStamp(), 'utf8');
+}
+
 // Alert on state transitions (new failures, recoveries, reminders).
 if (events.length > 0) {
   await dispatch(
@@ -156,15 +184,31 @@ if (giveawayChangeBlock) {
   }
 }
 
-// Full status digest of every check — the hourly "broken-down detail" report.
-// Sent on EVERY run (hourly cron + manual), not just on incident transitions,
-// so the operator gets an hourly snapshot of all 19 checks (grouped, with each
-// check's detail + timing) rather than only an alert when something breaks.
+// Full status digest of every check — the "broken-down detail" hourly report.
+//
+// The workflow now runs every 15 minutes (see .github/workflows/monitor.yml)
+// for resilience against GitHub cron drops, but the operator wants to see a
+// full digest at most ONCE PER CLOCK HOUR — not four times. The UTC hour-stamp
+// gate below ensures exactly that: the first 15-min run to enter each UTC hour
+// dispatches the digest; the remaining three runs in that hour log and skip.
+// Manual runs always bypass the gate so operators get a full report on demand.
+//
+// NOTE: incident alerts (NEW FAILURES / RECOVERED / STILL FAILING) are NOT
+// gated — they fire on every 15-minute run so real failures surface within
+// 15 minutes, not up to an hour.
 //
 // The giveaway rotation report is dispatched separately above (daily-gated at
-// 3 AM Central) and is deliberately NOT appended here: the user wants the
-// hourly status board kept "aside from the daily giveaway changes report", so
-// the two stay distinct messages instead of one being folded into the other.
-const reportTitle = isManualRun ? 'Manual Run Report' : 'Hourly Status Report';
-const statusReport = formatStatusMessage({ checks: aggregated, traceId: results.traceId, runUrl, title: reportTitle });
-await dispatch(statusReport, isManualRun ? 'Manual status report' : 'Hourly status report');
+// 3 AM Central) and is deliberately NOT appended here: the two stay distinct
+// messages instead of one being folded into the other.
+const hourlyStamp = readHourlyStatusStamp();
+if (shouldSendHourlyStatusReport({ isManualRun, stamp: hourlyStamp })) {
+  const reportTitle = isManualRun ? 'Manual Run Report' : 'Hourly Status Report';
+  const statusReport = formatStatusMessage({ checks: aggregated, traceId: results.traceId, runUrl, title: reportTitle });
+  await dispatch(statusReport, isManualRun ? 'Manual status report' : 'Hourly status report');
+  if (!isManualRun) writeHourlyStatusStamp();
+} else {
+  console.log(
+    `Status digest already sent this UTC hour (${hourlyStamp}). ` +
+    `Skipping — next digest will fire on the first run of UTC hour ${getHourStamp(new Date(Date.now() + 3600000))}.`
+  );
+}

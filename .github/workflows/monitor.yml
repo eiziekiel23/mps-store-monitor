@@ -2,7 +2,12 @@ name: Store Monitor
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    # Run every 15 minutes, offset to minutes 7/22/37/52 to avoid the
+    # congested top-of-hour and half-hour marks on GitHub's shared cron
+    # scheduler. When any individual tick is dropped the next one fires
+    # within 15 minutes, keeping coverage continuous. The status digest is
+    # gated to once per clock hour in src/report.js (see HOURLY_STATUS_STAMP_PATH).
+    - cron: '7,22,37,52 * * * *'
   workflow_dispatch:
 
 permissions:

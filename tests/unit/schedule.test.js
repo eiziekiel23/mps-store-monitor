@@ -1,6 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { getCentralTime, shouldSendDailyGiveawayReport, DAILY_REPORT_HOUR } from '../../src/schedule.js';
+import {
+  getCentralTime,
+  shouldSendDailyGiveawayReport,
+  DAILY_REPORT_HOUR,
+  getHourStamp,
+  shouldSendHourlyStatusReport
+} from '../../src/schedule.js';
 
 describe('schedule: giveaway daily report', () => {
   describe('getCentralTime', () => {
@@ -148,6 +154,84 @@ describe('schedule: giveaway daily report', () => {
         shouldSendDailyGiveawayReport({ isManualRun: false, stamp: '', now: cdt3am }),
         true,
         '03:00 should trigger'
+      );
+    });
+  });
+
+  describe('getHourStamp', () => {
+    it('returns the UTC YYYY-MM-DDTHH bucket', () => {
+      assert.equal(getHourStamp(new Date('2026-10-10T07:52:00Z')), '2026-10-10T07');
+    });
+
+    it('is stable across different minutes within the same UTC hour', () => {
+      assert.equal(
+        getHourStamp(new Date('2026-10-10T07:07:00Z')),
+        getHourStamp(new Date('2026-10-10T07:52:59Z'))
+      );
+    });
+
+    it('changes across an hour boundary even one second apart', () => {
+      assert.notEqual(
+        getHourStamp(new Date('2026-10-10T07:59:59Z')),
+        getHourStamp(new Date('2026-10-10T08:00:00Z'))
+      );
+    });
+
+    it('does not repeat across the DST fall-back UTC hour (UTC has no repeated hours)', () => {
+      // Local Central time repeats 01:00 CDT -> 01:00 CST on fall-back, but the
+      // UTC moment never repeats, so the stamp must differ.
+      assert.notEqual(
+        getHourStamp(new Date('2026-11-01T06:30:00Z')),
+        getHourStamp(new Date('2026-11-01T07:30:00Z'))
+      );
+    });
+  });
+
+  describe('shouldSendHourlyStatusReport', () => {
+    const t1 = new Date('2026-10-10T07:07:00Z');   // first 15-min tick of hour 07
+    const t2 = new Date('2026-10-10T07:22:00Z');   // second tick, same hour
+    const t3 = new Date('2026-10-10T08:07:00Z');   // first tick of the NEXT hour
+
+    it('manual runs always return true, regardless of stamp', () => {
+      assert.equal(
+        shouldSendHourlyStatusReport({ isManualRun: true, stamp: getHourStamp(t1), now: t1 }),
+        true
+      );
+    });
+
+    it('returns true on the first run of an hour with no prior stamp', () => {
+      assert.equal(
+        shouldSendHourlyStatusReport({ isManualRun: false, stamp: '', now: t1 }),
+        true
+      );
+    });
+
+    it('returns false on a later 15-min run within the same hour once sent', () => {
+      const stampAfterFirstSend = getHourStamp(t1);
+      assert.equal(
+        shouldSendHourlyStatusReport({ isManualRun: false, stamp: stampAfterFirstSend, now: t2 }),
+        false,
+        'second tick in the same UTC hour should skip'
+      );
+    });
+
+    it('returns true again on the first run of the next hour', () => {
+      const stampFromPriorHour = getHourStamp(t1);
+      assert.equal(
+        shouldSendHourlyStatusReport({ isManualRun: false, stamp: stampFromPriorHour, now: t3 }),
+        true,
+        'new UTC hour should send even though an earlier hour already sent'
+      );
+    });
+
+    it('self-heals when the first tick of an hour was dropped: second tick still sends', () => {
+      // Stamp still shows the PREVIOUS hour (the :07 run never happened), so the
+      // :22 run of the new hour must still dispatch.
+      const staleStamp = getHourStamp(new Date('2026-10-10T06:52:00Z'));
+      assert.equal(
+        shouldSendHourlyStatusReport({ isManualRun: false, stamp: staleStamp, now: t2 }),
+        true,
+        'a stale stamp from an earlier hour must still trigger a send'
       );
     });
   });

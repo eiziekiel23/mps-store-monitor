@@ -81,3 +81,53 @@ export function shouldSendDailyGiveawayReport({ isManualRun, stamp, now }) {
   if (hour < DAILY_REPORT_HOUR) return false;
   return stamp !== date;
 }
+
+/**
+ * Hour key used to throttle the status digest to one send per clock hour.
+ *
+ * WHY UTC AND NOT CENTRAL
+ * -----------------------
+ * This stamp exists only to answer "did we already send a digest this hour?",
+ * so it needs a key that is *monotonic and unambiguous* — not one a human
+ * reads. Local-time hour keys are neither at a DST boundary: Central repeats
+ * the 01:00 hour on the fall-back Sunday (two distinct hours share one key →
+ * the second hour's digest is suppressed) and skips 02:00 on spring-forward.
+ * UTC has no repeated or missing hours, ever, so every real hour gets exactly
+ * one digest.
+ *
+ * `toISOString()` is always UTC and always `YYYY-MM-DDTHH:mm:ss.sssZ`, so the
+ * first 13 characters are a stable "YYYY-MM-DDTHH" bucket.
+ *
+ * @param {Date} [now] - injectable for unit tests
+ * @returns {string} e.g. "2026-10-10T07"
+ */
+export function getHourStamp(now = new Date()) {
+  return now.toISOString().slice(0, 13);
+}
+
+/**
+ * Decide whether the full status digest should dispatch on this run.
+ *
+ * The workflow fires every 15 minutes (see .github/workflows/monitor.yml) so a
+ * dropped GitHub cron tick cannot cost us an hour of coverage. The operator
+ * still wants an *hourly* report, not four per hour, so the digest is gated on
+ * a UTC-hour stamp: the first run to land in a given hour sends it, the other
+ * three log and skip.
+ *
+ * This is self-healing in the same way the daily gate is — if the :07 run is
+ * dropped, the :22 run finds an unmatched stamp and sends the digest instead.
+ * Incident alerts are deliberately NOT gated: they stay on every 15-minute run
+ * so a real failure surfaces within 15 minutes rather than up to an hour.
+ *
+ * Pure (no I/O) — the caller reads/writes the stamp.
+ *
+ * @param {{ isManualRun: boolean, stamp: string, now?: Date }} opts
+ * @param {boolean}  opts.isManualRun - true for workflow_dispatch / local runs
+ * @param {string}   opts.stamp       - last-sent hour key, or ''
+ * @param {Date}    [opts.now]        - injectable for unit tests
+ * @returns {boolean}
+ */
+export function shouldSendHourlyStatusReport({ isManualRun, stamp, now }) {
+  if (isManualRun) return true;
+  return stamp !== getHourStamp(now);
+}
