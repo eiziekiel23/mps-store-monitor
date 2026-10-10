@@ -255,16 +255,20 @@ export function formatRunMessage({ events = [], traceId, runUrl, artifactUrl, ch
 }
 
 /**
- * Formats a full test status report for manual (workflow_dispatch) runs.
- * Shows every check grouped by category so operators can scan the full
- * picture in one glance — no hunting through raw passed/failed counts.
+ * Formats a full test status report. Shows every check grouped by category so
+ * operators can scan the full picture in one glance — no hunting through raw
+ * passed/failed counts.
+ *
+ * Sent on every run: hourly on the cron schedule and on manual
+ * (workflow_dispatch) triggers. `title` names the trigger so the two are
+ * distinguishable in the Telegram history at a glance.
  */
-export function formatStatusMessage({ checks = [], traceId, runUrl }) {
+export function formatStatusMessage({ checks = [], traceId, runUrl, title = 'Status Report' }) {
   const t = tally(checks);
   const failed = checks.filter((c) => c.status === 'failed');
 
   const statusEmoji = failed.length > 0 ? '🔴' : '✅';
-  const lines = [`${statusEmoji} <b>MPS Store Monitor — Manual Run Report</b>`];
+  const lines = [`${statusEmoji} <b>MPS Store Monitor — ${escapeHtml(title)}</b>`];
 
   lines.push(`\n${tallyLine(checks)}`);
 

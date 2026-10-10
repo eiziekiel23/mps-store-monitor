@@ -156,16 +156,15 @@ if (giveawayChangeBlock) {
   }
 }
 
-// On a manual/local run, additionally send a full status digest of every
-// check, even when nothing changed — this is the "full test report".
-if (isManualRun) {
-  let statusReport = formatStatusMessage({ checks: aggregated, traceId: results.traceId, runUrl });
-
-  // If giveaway changes were already computed and dispatched above, append them to the digest too
-  // so the operator can see both the alert and the full context in the manual report.
-  if (giveawayChangeBlock) {
-    statusReport += giveawayChangeBlock;
-  }
-
-  await dispatch(statusReport, 'Manual status report');
-}
+// Full status digest of every check — the hourly "broken-down detail" report.
+// Sent on EVERY run (hourly cron + manual), not just on incident transitions,
+// so the operator gets an hourly snapshot of all 19 checks (grouped, with each
+// check's detail + timing) rather than only an alert when something breaks.
+//
+// The giveaway rotation report is dispatched separately above (daily-gated at
+// 3 AM Central) and is deliberately NOT appended here: the user wants the
+// hourly status board kept "aside from the daily giveaway changes report", so
+// the two stay distinct messages instead of one being folded into the other.
+const reportTitle = isManualRun ? 'Manual Run Report' : 'Hourly Status Report';
+const statusReport = formatStatusMessage({ checks: aggregated, traceId: results.traceId, runUrl, title: reportTitle });
+await dispatch(statusReport, isManualRun ? 'Manual status report' : 'Hourly status report');

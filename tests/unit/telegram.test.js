@@ -75,13 +75,35 @@ describe('alerting/telegram - formatStatusMessage', () => {
 
     const msg = formatStatusMessage({ checks, traceId });
 
-    assert.ok(msg.includes('✅ <b>MPS Store Monitor — Manual Run Report</b>'));
+    assert.ok(msg.includes('✅ <b>MPS Store Monitor — Status Report</b>'));
     // Per-check status board replaces "All checks passing" summary
     assert.ok(msg.includes('<b>Storefront</b>'));
     assert.ok(msg.includes('✅ Store reachable'));
     assert.ok(msg.includes('<b>Navigation</b>'));
     assert.ok(msg.includes('⏭️ Mobile hamburger menu'));
     assert.ok(msg.includes(traceId));
+    assertValidHtml(msg);
+  });
+
+  test('title defaults to "Status Report" and can be overridden per trigger', () => {
+    const checks = [{ id: 'store.reachable', status: 'passed' }];
+
+    const defaultMsg = formatStatusMessage({ checks, traceId });
+    assert.ok(defaultMsg.includes('MPS Store Monitor — Status Report'));
+
+    const hourlyMsg = formatStatusMessage({ checks, traceId, title: 'Hourly Status Report' });
+    assert.ok(hourlyMsg.includes('MPS Store Monitor — Hourly Status Report'));
+
+    const manualMsg = formatStatusMessage({ checks, traceId, title: 'Manual Run Report' });
+    assert.ok(manualMsg.includes('MPS Store Monitor — Manual Run Report'));
+  });
+
+  test('escapes HTML-special characters in a hostile title', () => {
+    const checks = [{ id: 'store.reachable', status: 'passed' }];
+    const msg = formatStatusMessage({ checks, traceId, title: '<script>&</script>' });
+
+    assert.ok(msg.includes('&lt;script&gt;&amp;&lt;/script&gt;'));
+    assert.ok(!msg.includes('<script>'));
     assertValidHtml(msg);
   });
 
@@ -93,7 +115,7 @@ describe('alerting/telegram - formatStatusMessage', () => {
 
     const msg = formatStatusMessage({ checks, traceId });
 
-    assert.ok(msg.includes('🔴 <b>MPS Store Monitor — Manual Run Report</b>'));
+    assert.ok(msg.includes('🔴 <b>MPS Store Monitor — Status Report</b>'));
     assert.ok(msg.includes('🔴 <b>FAILURE DETAILS</b>'));
     // Friendly name + check ID shown together for ops reference
     assert.ok(msg.includes('Giveaway / Gallery / Reviews links'));
