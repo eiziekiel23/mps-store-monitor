@@ -1,6 +1,26 @@
 import { CHECK_LABELS, CHECK_GROUPS, STATUS_EMOJI } from './labels.js';
 
 /**
+ * Escapes Telegram legacy-Markdown entity delimiters (`_ * \` [`) in a piece of
+ * dynamic/arbitrary text so it renders as literal characters instead of trying
+ * to open/close a Markdown entity.
+ *
+ * Use this ONLY on interpolated values (error strings, field values, raw check
+ * ids used as a label fallback) — never on the literal `*…*`/`_…_`/`` `…` ``
+ * wrapper characters we write ourselves, or the intended formatting disappears.
+ *
+ * Why this matters: Telegram's Bot API rejects the whole message with HTTP 400
+ * ("can't parse entities: Can't find end of the entity...") if any `_`/`*` in
+ * the text is unbalanced. A real example that triggered this in production:
+ * an error string containing the Shopify field name `flash_giveaway_end_date`
+ * (3 underscores) wrapped bare in an `_..._` italic span — 3 + the span's own
+ * 2 wrapper underscores = 5, an odd/unbalanced count.
+ */
+export function escapeMd(text) {
+  return String(text).replace(/([_*`[\]])/g, '\\$1');
+}
+
+/**
  * Build a grouped per-check status board for Telegram (Markdown mode).
  *
  * Checks are rendered under their category header (Storefront, Navigation, …).
@@ -24,7 +44,9 @@ function buildStatusBoard(checks) {
     lines.push(`\n*${group.label}*`);
     for (const c of present) {
       const emoji = STATUS_EMOJI[c.status] ?? '❓';
-      const label = CHECK_LABELS[c.id] ?? c.id;
+      // escapeMd guards the fallback (`?? c.id`) — a raw check id like
+      // "cart.add_pdp" would otherwise sit unescaped outside any code span.
+      const label = escapeMd(CHECK_LABELS[c.id] ?? c.id);
       lines.push(`${emoji} ${label}`);
     }
   }
@@ -35,7 +57,7 @@ function buildStatusBoard(checks) {
     lines.push('\n*Other*');
     for (const c of ungrouped) {
       const emoji = STATUS_EMOJI[c.status] ?? '❓';
-      lines.push(`${emoji} ${CHECK_LABELS[c.id] ?? c.id}`);
+      lines.push(`${emoji} ${escapeMd(CHECK_LABELS[c.id] ?? c.id)}`);
     }
   }
 
@@ -61,15 +83,18 @@ export function formatRunMessage({ events = [], traceId, runUrl, artifactUrl, ch
   if (opened.length) {
     lines.push('\n🔴 *NEW FAILURES*');
     for (const e of opened) {
-      const label = CHECK_LABELS[e.check] ?? e.check;
-      lines.push(`• ${label} (\`${e.check}\`)\n  _${e.error || 'Unknown error'}_`);
+      const label = escapeMd(CHECK_LABELS[e.check] ?? e.check);
+      // escapeMd the error text so bare underscores (like in "flash_giveaway_end_date")
+      // don't break the `_..._` italic span. This was the root cause of GitHub Actions
+      // failures with HTTP 400 "can't parse entities".
+      lines.push(`• ${label} (\`${e.check}\`)\n  _${escapeMd(e.error || 'Unknown error')}_`);
     }
   }
 
   if (reminder.length) {
     lines.push('\n🔁 *STILL FAILING*');
     for (const e of reminder) {
-      const label = CHECK_LABELS[e.check] ?? e.check;
+      const label = escapeMd(CHECK_LABELS[e.check] ?? e.check);
       const hours = (e.durationMs / 3600000).toFixed(1);
       lines.push(`• ${label} (\`${e.check}\`) — ${hours}h`);
     }
@@ -78,7 +103,7 @@ export function formatRunMessage({ events = [], traceId, runUrl, artifactUrl, ch
   if (recovered.length) {
     lines.push('\n✅ *RECOVERED*');
     for (const e of recovered) {
-      const label = CHECK_LABELS[e.check] ?? e.check;
+      const label = escapeMd(CHECK_LABELS[e.check] ?? e.check);
       const mins = Math.round(e.durationMs / 60000);
       lines.push(`• ${label} (\`${e.check}\`) — after ${mins}m`);
     }
@@ -125,10 +150,10 @@ export function formatStatusMessage({ checks = [], traceId, runUrl }) {
   if (failed.length > 0) {
     lines.push('\n🔴 *FAILURE DETAILS*');
     for (const c of failed) {
-      const label = CHECK_LABELS[c.id] ?? c.id;
-      lines.push(`• ${label} (\`${c.id}\`)\n  _${c.error || 'Unknown error'}_`);
+      const label = escapeMd(CHECK_LABELS[c.id] ?? c.id);
+      lines.push(`• ${label} (\`${c.id}\`)\n  _${escapeMd(c.error || 'Unknown error')}_`);
       if (c.platformNote) {
-        lines.push(`  _(${c.platformNote})_`);
+        lines.push(`  _(${escapeMd(c.platformNote)})_`);
       }
     }
   }

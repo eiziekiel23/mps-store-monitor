@@ -2,6 +2,30 @@ import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { formatRunMessage, formatStatusMessage, sendTelegram } from '../../src/alerting/telegram.js';
 
+/**
+ * Approximates Telegram's legacy-Markdown entity parser well enough to catch the
+ * failure class that returns HTTP 400 "can't parse entities".
+ *
+ * Telegram treats `_` and `*` as entity delimiters, so each must appear an EVEN
+ * number of times. Two things are not delimiters and are removed first:
+ *   - text inside a `backtick code span` (parsed literally, never as entities)
+ *   - a backslash-escaped delimiter (\_ \* \` \[)
+ */
+function assertBalancedEntities(msg) {
+  const scannable = msg
+    .replace(/\\[_*`[\]]/g, '')  // drop escaped delimiters
+    .replace(/`[^`]*`/g, '');    // drop code spans wholesale
+
+  for (const ch of ['_', '*']) {
+    const count = (scannable.split(ch).length - 1);
+    assert.equal(
+      count % 2,
+      0,
+      `unescaped "${ch}" count must be even (balanced) or Telegram returns 400; got ${count}`
+    );
+  }
+}
+
 describe('alerting/telegram - formatStatusMessage', () => {
   const traceId = 'b'.repeat(32);
 
@@ -160,6 +184,49 @@ describe('alerting/telegram - formatRunMessage', () => {
 
     assert.ok(msg.includes('🔴 *NEW FAILURES*'));
     assert.ok(!msg.includes('📋 *Check Status*'), 'status board not added when checks not provided');
+  });
+
+  // Regression: a real production error string from tests/storefront/timer.spec.js:58
+  // contains the identifier "flash_giveaway_end_date" (3 underscores). Wrapped bare in
+  // an italic `_..._` span, the message has an ODD total underscore count, so Telegram's
+  // legacy-Markdown parser rejects it with HTTP 400 "can't parse entities: Can't find end
+  // of the entity...". The dynamic error text must have its Markdown delimiters escaped.
+  test('escapes Markdown delimiters in error text so Telegram cannot choke on them', () => {
+    const events = [
+      {
+        type: 'opened',
+        check: 'timer.correct',
+        error: "Invalid flash_giveaway_end_date format from metaobject: 'October 8, 2026'"
+      }
+    ];
+
+    const msg = formatRunMessage({ events, traceId });
+
+    assert.ok(
+      msg.includes('flash\\_giveaway\\_end\\_date'),
+      'underscores in the error identifier should be escaped'
+    );
+    assertBalancedEntities(msg);
+  });
+
+  test('escapes Markdown delimiters when an unknown check id is used as the label fallback', () => {
+    // No CHECK_LABELS entry → the raw id is reused as the bare (non-code-span) label,
+    // putting its underscore outside any protective backtick span.
+    const events = [{ type: 'opened', check: 'custom.new_check', error: 'boom' }];
+    const msg = formatRunMessage({ events, traceId });
+
+    assertBalancedEntities(msg);
+  });
+
+  test('escapes asterisks and brackets in error text', () => {
+    const events = [
+      { type: 'opened', check: 'store.reachable', error: 'Selector [data-id] matched *3* nodes' }
+    ];
+    const msg = formatRunMessage({ events, traceId });
+
+    assert.ok(msg.includes('\\[data-id\\]'), 'brackets should be escaped');
+    assert.ok(msg.includes('\\*3\\*'), 'asterisks should be escaped');
+    assertBalancedEntities(msg);
   });
 });
 

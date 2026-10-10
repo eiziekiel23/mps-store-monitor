@@ -1,4 +1,5 @@
 import { parseGiveawayDate } from '../snapshot.js';
+import { escapeMd } from '../alerting/telegram.js';
 
 /**
  * Flash-giveaway changelog + daily-rotation freshness.
@@ -255,7 +256,10 @@ export function formatChangesForTelegram(changes = []) {
   const lines = ['\n🎁 *GIVEAWAY CHANGES*'];
   for (const c of changes) {
     lines.push(`• \`${c.field}\``);
-    lines.push(`  _${truncate(c.old, 48) || '—'}_ → _${truncate(c.new, 48) || '—'}_`);
+    // Metaobject values are arbitrary (banner filenames, URLs, product names) and
+    // routinely contain underscores — escapeMd keeps them from breaking the `_..._`
+    // italic spans and getting the whole message rejected with HTTP 400.
+    lines.push(`  _${escapeMd(truncate(c.old, 48) || '—')}_ → _${escapeMd(truncate(c.new, 48) || '—')}_`);
   }
   return lines.join('\n');
 }
