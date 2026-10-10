@@ -1,4 +1,4 @@
-import { CHECK_LABELS, CHECK_GROUPS, STATUS_EMOJI } from './labels.js';
+import { CHECK_LABELS, CHECK_DETAILS, CHECK_GROUPS, STATUS_EMOJI } from './labels.js';
 
 /**
  * Telegram message formatting — HTML parse mode.
@@ -72,6 +72,21 @@ function snippet(text, max = BOARD_ERROR_MAX) {
 }
 
 /**
+ * Compact human duration: "450ms", "1.2s", "2m05s".
+ * Returns '' for missing/non-numeric input so callers can omit the field
+ * entirely rather than printing "undefined" or "NaN".
+ */
+function formatDuration(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n < 0) return '';
+  if (n < 1000) return `${Math.round(n)}ms`;
+  if (n < 60000) return `${(n / 1000).toFixed(1)}s`;
+  const mins = Math.floor(n / 60000);
+  const secs = Math.round((n % 60000) / 1000);
+  return `${mins}m${String(secs).padStart(2, '0')}s`;
+}
+
+/**
  * Keep the message inside Telegram's hard limit.
  * Safe because every tag we emit is closed on the same line, so cutting on a
  * newline boundary can never split a tag and produce unparseable HTML.
@@ -111,25 +126,37 @@ function tallyLine(checks) {
 /**
  * Render one check as one or more status-board lines.
  *
- * Passing/skipped checks stay on a single compact line. Failing and flaky ones
- * are broken down further — they additionally carry the raw check id (so an
- * operator can grep the spec without consulting labels.js), the error text, and
- * the cross-project divergence note when the Playwright projects disagree.
+ * Every check shows:
+ *   emoji + label + (detail description if available)
+ *
+ * Failing and flaky checks additionally show:
+ *   - bold label + code id (for grep)
+ *   - indented error snippet
+ *   - cross-project divergence note if present
  */
 function statusRows(check) {
   const emoji = STATUS_EMOJI[check.status] ?? '❓';
   const label = escapeHtml(CHECK_LABELS[check.id] ?? check.id);
-  const needsDetail = check.status === 'failed' || check.status === 'flaky';
+  const detail = CHECK_DETAILS[check.id];
+  const dur = formatDuration(check.durationMs);
+  // Attempt count is only interesting when a check had to retry (flaky/slow).
+  const attempts = Number(check.attempts) > 1 ? `, ${check.attempts} attempts` : '';
+  const timing = dur ? ` <i>(${dur}${attempts})</i>` : '';
 
-  if (!needsDetail) return [`${emoji} ${label}`];
+  if (check.status === 'failed' || check.status === 'flaky') {
+    // Failing/flaky: detailed view with check id, timing, error, platform note
+    const rows = [`${emoji} <b>${label}</b> — <code>${escapeHtml(check.id)}</code>${timing}`];
+    if (detail) rows.push(`    <i>${detail}</i>`);
+    const err = snippet(check.error);
+    if (err) rows.push(`    ↳ <i>${escapeHtml(err)}</i>`);
+    if (check.platformNote) rows.push(`    ↳ <i>${escapeHtml(check.platformNote)}</i>`);
+    return rows;
+  }
 
-  const rows = [`${emoji} <b>${label}</b> — <code>${escapeHtml(check.id)}</code>`];
-
-  const err = snippet(check.error);
-  if (err) rows.push(`    ↳ <i>${escapeHtml(err)}</i>`);
-  if (check.platformNote) rows.push(`    ↳ <i>${escapeHtml(check.platformNote)}</i>`);
-
-  return rows;
+  // Passing/skipped: compact line with detail description + timing
+  const parts = [`${emoji} ${label}${timing}`];
+  if (detail) parts.push(`<i>${detail}</i>`);
+  return [parts.join('\n    ')];
 }
 
 /**

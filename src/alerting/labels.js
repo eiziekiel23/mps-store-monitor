@@ -37,6 +37,42 @@ export const CHECK_LABELS = {
   'alerting.healthy':        'Alerting system',
 };
 
+/**
+ * One-line description of what each check actually verifies.
+ * Shown beneath the status line in the Telegram board for every check,
+ * so operators can scan the board without knowing the spec code.
+ * Derived from the real assertions in the spec files — keep in sync if specs change.
+ */
+export const CHECK_DETAILS = {
+  // Storefront
+  'store.reachable':         'Homepage HTTP &lt;400, &lt;title&gt; present, no Liquid error',
+  'home.sections':           'No Liquid errors, required section types exist, no broken images',
+  'product.sections':        'PDP: no Liquid errors, required product sections present',
+  'announcement.correct':    'Announcement bar text matches metaobject value',
+  'timer.correct':           'Countdown decreasing, within ±2m of giveaway end date',
+  'flash.banners':           'Flash giveaway banner found on homepage, all images loaded',
+  'product.giveaway_images': 'Giveaway banner images visible on PDP, all loaded',
+  'video.how_to_enter':      'How-to-enter video element attached and playing',
+  // Navigation
+  'nav.key_links':           'Giveaway, Gallery, Reviews links present and return HTTP &lt;400',
+  'nav.quick_links':         'Footer quick links present, hrefs match config paths',
+  'nav.rules':               'Official rules page returns HTTP &lt;400, heading visible',
+  'nav.hamburger':           'Mobile nav opens/closes on hamburger tap (mobile only)',
+  // Cart
+  'cart.add_pdp':            'Add-to-cart succeeds, cart item_count &gt; 0',
+  'cart.entries':            'Cart entries total = Σ(variant entries × qty) from metaobject',
+  // Checkout
+  'checkout.entries':        'Checkout PRODUCT ENTRIES banner matches /cart.js sum',
+  'checkout.bonus_entries':  'Checkout BONUS ENTRIES matches timer bonus from metaobject',
+  'checkout.trust_badge':    'Trust badge visible in checkout, image loaded (naturalWidth &gt; 0)',
+  // Stock
+  'stock.all':               'All displayed DENY-policy products available (Admin API)',
+  // Giveaway
+  'giveaway.freshness':      'Giveaway metaobject fields rotated since 02:00 Chicago',
+  // System
+  'alerting.healthy':        'Telegram dispatch succeeded for the previous run',
+};
+
 /** Ordered display groups for the per-check status board. */
 export const CHECK_GROUPS = [
   {
