@@ -9,7 +9,8 @@ import {
   shouldSendHourlyStatusReport,
   getCentralTime,
   getHourStamp,
-  DAILY_REPORT_HOUR
+  DAILY_REPORT_HOUR,
+  resolveIsManualRun
 } from './schedule.js';
 
 // Parse command-line flags
@@ -79,12 +80,13 @@ const runUrl = process.env.GITHUB_SERVER_URL && process.env.GITHUB_REPOSITORY &&
   ? `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
   : undefined;
 
-// A manually-triggered run (workflow_dispatch) or local invocation should
+// An operator-initiated run (manual workflow_dispatch or local invocation) should
 // always produce a visible report so the operator can confirm the monitor
-// actually ran and see every check's status. Scheduled (cron) runs stay
-// alert-only to avoid hourly "all clear" spam — that is the core no-spam
-// contract of the alerting layer.
-const isManualRun = process.env.GITHUB_EVENT_NAME === 'workflow_dispatch' || !process.env.GITHUB_EVENT_NAME;
+// actually ran and see every check's status. Automated runs (native schedule or
+// external scheduler via workflow_dispatch with trigger=scheduled) apply the
+// daily and hourly gates to avoid Telegram spam — one digest per clock hour,
+// one giveaway report per calendar day. See resolveIsManualRun in schedule.js.
+const isManualRun = resolveIsManualRun();
 
 async function dispatch(text, label) {
   if (!text) return;

@@ -9,6 +9,19 @@ on:
     # gated to once per clock hour in src/report.js (see HOURLY_STATUS_STAMP_PATH).
     - cron: '7,22,37,52 * * * *'
   workflow_dispatch:
+    inputs:
+      trigger:
+        description: >-
+          Who triggered this run. An external scheduler (cron-job.org) must
+          pass "scheduled" so the daily/hourly gates apply exactly as they do
+          for native cron. A human clicking "Run workflow" leaves this at
+          "manual" to get a full report on demand.
+        required: false
+        default: manual
+        type: choice
+        options:
+          - manual
+          - scheduled
 
 permissions:
   contents: write
@@ -61,6 +74,10 @@ jobs:
           SHOPIFY_STOREFRONT_TOKEN: ${{ secrets.SHOPIFY_STOREFRONT_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Only set on workflow_dispatch; empty for native schedule runs. The
+          # report's resolveIsManualRun() treats "scheduled" (external cron-job.org
+          # caller) as a gated run and anything else from a dispatch as manual.
+          WORKFLOW_TRIGGER: ${{ github.event.inputs.trigger }}
         run: node src/report.js
 
       - name: Cache incident state for next run

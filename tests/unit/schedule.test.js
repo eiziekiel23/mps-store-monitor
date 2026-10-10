@@ -5,7 +5,8 @@ import {
   shouldSendDailyGiveawayReport,
   DAILY_REPORT_HOUR,
   getHourStamp,
-  shouldSendHourlyStatusReport
+  shouldSendHourlyStatusReport,
+  resolveIsManualRun
 } from '../../src/schedule.js';
 
 describe('schedule: giveaway daily report', () => {
@@ -233,6 +234,74 @@ describe('schedule: giveaway daily report', () => {
         true,
         'a stale stamp from an earlier hour must still trigger a send'
       );
+    });
+  });
+
+  describe('resolveIsManualRun', () => {
+    it('treats a local run (no GITHUB_EVENT_NAME) as manual', () => {
+      assert.equal(resolveIsManualRun({}), true, 'dev/local runs should get a full report');
+    });
+
+    it('treats a native schedule run as NOT manual', () => {
+      assert.equal(resolveIsManualRun({ GITHUB_EVENT_NAME: 'schedule' }), false);
+    });
+
+    it('treats an external scheduler dispatch (trigger=scheduled) as NOT manual', () => {
+      // This is the cron-job.org caller: it must be gated exactly like native
+      // cron, otherwise every 15-minute call sends a full digest.
+      assert.equal(
+        resolveIsManualRun({
+          GITHUB_EVENT_NAME: 'workflow_dispatch',
+          WORKFLOW_TRIGGER: 'scheduled'
+        }),
+        false,
+        'external scheduled dispatches must obey the hourly/daily gates'
+      );
+    });
+
+    it('treats an operator dispatch with trigger=manual as manual', () => {
+      assert.equal(
+        resolveIsManualRun({
+          GITHUB_EVENT_NAME: 'workflow_dispatch',
+          WORKFLOW_TRIGGER: 'manual'
+        }),
+        true
+      );
+    });
+
+    it('treats a dispatch with no trigger input as manual (backwards compatible)', () => {
+      // Runs dispatched before the `trigger` input existed, or via an API call
+      // that omits inputs entirely, must keep the old full-report behavior.
+      assert.equal(
+        resolveIsManualRun({ GITHUB_EVENT_NAME: 'workflow_dispatch' }),
+        true,
+        'omitting the input must not silently gate an operator run'
+      );
+    });
+
+    it('treats a dispatch with an empty-string trigger as manual', () => {
+      // GitHub substitutes an empty string for an unset input expression, so
+      // this is what a dispatch without the input actually looks like in env.
+      assert.equal(
+        resolveIsManualRun({ GITHUB_EVENT_NAME: 'workflow_dispatch', WORKFLOW_TRIGGER: '' }),
+        true
+      );
+    });
+
+    it('treats any other event (e.g. push) as NOT manual', () => {
+      assert.equal(resolveIsManualRun({ GITHUB_EVENT_NAME: 'push' }), false);
+    });
+
+    it('only the exact string "scheduled" gates a dispatch', () => {
+      // Guard against a typo in the external scheduler's payload silently
+      // turning every call into a spamming manual run.
+      for (const value of ['Scheduled', 'SCHEDULED', 'cron', 'auto', 'scheduled ']) {
+        assert.equal(
+          resolveIsManualRun({ GITHUB_EVENT_NAME: 'workflow_dispatch', WORKFLOW_TRIGGER: value }),
+          true,
+          `"${value}" should not be mistaken for "scheduled"`
+        );
+      }
     });
   });
 });

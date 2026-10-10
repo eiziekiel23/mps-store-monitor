@@ -131,3 +131,41 @@ export function shouldSendHourlyStatusReport({ isManualRun, stamp, now }) {
   if (isManualRun) return true;
   return stamp !== getHourStamp(now);
 }
+
+/**
+ * Decide whether this run counts as "manual" (operator-initiated) for the
+ * purpose of bypassing the daily and hourly gates above.
+ *
+ * WHY THIS EXISTS
+ * ----------------
+ * GitHub's native `schedule:` trigger drops the large majority of its ticks
+ * on this repo (observed: 3 of ~95 expected runs over 4 days). The
+ * supplementary fix is an external scheduler (e.g. cron-job.org) calling the
+ * `workflow_dispatch` REST API every 15 minutes instead. But `workflow_dispatch`
+ * is also how a human triggers an on-demand run from the Actions tab — and a
+ * human expects a full report every time, while the external scheduler's
+ * calls must be gated exactly like native cron ticks, or every 15-minute call
+ * sends a full digest + (once a day) the giveaway report, forever.
+ *
+ * The two are told apart with a `trigger` input on `workflow_dispatch`
+ * (see .github/workflows/monitor.yml): the external scheduler passes
+ * `trigger=scheduled`; a human clicking "Run workflow" leaves it at the
+ * default (`manual`) or omits it.
+ *
+ * Truth table:
+ *   - no GITHUB_EVENT_NAME (local/dev run)                  → manual (true)
+ *   - workflow_dispatch, WORKFLOW_TRIGGER=scheduled          → NOT manual (false)
+ *   - workflow_dispatch, any other/missing WORKFLOW_TRIGGER  → manual (true)
+ *   - schedule (native cron) or any other event              → NOT manual (false)
+ *
+ * @param {NodeJS.ProcessEnv} [env] - injectable for unit tests (default: process.env)
+ * @returns {boolean}
+ */
+export function resolveIsManualRun(env = process.env) {
+  const event = env.GITHUB_EVENT_NAME;
+  if (!event) return true;
+  if (event === 'workflow_dispatch') {
+    return env.WORKFLOW_TRIGGER !== 'scheduled';
+  }
+  return false;
+}
