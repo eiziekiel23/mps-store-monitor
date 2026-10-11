@@ -363,4 +363,127 @@ describe('giveaway/swap.js - runGiveawaySwap', () => {
     assert.equal(result.reason, 'nothing-staged');
     // Implication: CLI should NOT write stamp. Test this behavior in integration tests.
   });
+
+  // ── Schema-compliance regression guard ──────────────────────────────────────
+  // A mocked fetcher cannot enforce Shopify's GraphQL schema, which is how an
+  // earlier implementation shipped a clear step built from `fields: [{key,
+  // value: null}]`. That payload is invalid: MetaobjectFieldInput.value is
+  // String! (non-null), so GraphQL rejects it at variable-validation time for
+  // EVERY field type — confirmed by live introspection, 2026-10-11. The promote
+  // succeeded and only the clear threw, which sent a FAILED alert and skipped
+  // the stamp write even though the live giveaway had updated correctly.
+  //
+  // These tests assert on the request PAYLOADS rather than the return value, so
+  // the two write modes can't be swapped or regressed silently:
+  //   - live entry  → `fields` (sparse: must not touch the 19 monthly fields)
+  //   - staging entry → `values: {}` (full replacement: clears all 8 daily fields)
+  test('uses sparse `fields` for live promote and `values: {}` to clear staging', async () => {
+    const requests = [];
+    const responses = [
+      // Query 1: upcoming entry, two fields staged
+      {
+        data: {
+          metaobjectByHandle: {
+            id: 'gid://shopify/Metaobject/upcoming',
+            handle: 'upcoming-flash-giveaway',
+            type: 'upcoming_flash_giveaway',
+            fields: [
+              { key: 'flash_giveaway_end_date', value: 'October 15, 2026 02:00:00' },
+              { key: 'pdp_images', value: '["gid://shopify/MediaImage/1"]' }
+            ]
+          }
+        }
+      },
+      // Query 2: live entry
+      {
+        data: {
+          metaobjectByHandle: {
+            id: 'gid://shopify/Metaobject/live',
+            handle: 'mps-giveaway',
+            type: 'giveaway',
+            fields: [
+              { key: 'flash_giveaway_end_date', value: 'October 14, 2026 02:00:00' },
+              { key: 'pdp_images', value: '["gid://shopify/MediaImage/0"]' },
+              { key: 'prize_text', value: 'Monthly prize' }
+            ]
+          }
+        }
+      },
+      // Mutation 1: promote to live
+      {
+        data: {
+          metaobjectUpdate: {
+            metaobject: { id: 'gid://shopify/Metaobject/live', handle: 'mps-giveaway', fields: [] },
+            userErrors: []
+          }
+        }
+      },
+      // Mutation 2: clear staging
+      {
+        data: {
+          metaobjectUpdate: {
+            metaobject: {
+              id: 'gid://shopify/Metaobject/upcoming',
+              handle: 'upcoming-flash-giveaway',
+              fields: []
+            },
+            userErrors: []
+          }
+        }
+      }
+    ];
+
+    const recordingFetcher = async (_url, options) => {
+      requests.push(JSON.parse(options.body));
+      const json = responses[requests.length - 1];
+      return { ok: true, status: 200, text: async () => '', json: async () => json };
+    };
+
+    const result = await runGiveawaySwap({
+      shop: 'test.myshopify.com',
+      token: 'test-token',
+      now: cdt3am,
+      stamp: '',
+      fetcher: recordingFetcher
+    });
+
+    assert.equal(result.ran, true);
+    assert.equal(requests.length, 4, 'expected 2 reads + 2 mutations');
+
+    const promote = requests[2].variables;
+    const clear = requests[3].variables;
+
+    // Promote targets the LIVE entry with a sparse `fields` write.
+    assert.equal(promote.id, 'gid://shopify/Metaobject/live');
+    assert.ok(Array.isArray(promote.metaobject.fields), 'promote must use `fields`');
+    assert.equal(
+      promote.metaobject.values,
+      undefined,
+      'promote must NOT use `values` — a full replacement would wipe the monthly fields'
+    );
+    assert.deepEqual(promote.metaobject.fields, [
+      { key: 'flash_giveaway_end_date', value: 'October 15, 2026 02:00:00' },
+      { key: 'pdp_images', value: '["gid://shopify/MediaImage/1"]' }
+    ]);
+
+    // Clear targets the STAGING entry with a full `values: {}` replacement.
+    assert.equal(clear.id, 'gid://shopify/Metaobject/upcoming');
+    assert.deepEqual(clear.metaobject.values, {}, 'clear must use `values: {}`');
+    assert.equal(
+      clear.metaobject.fields,
+      undefined,
+      '`values` and `fields` are mutually exclusive in MetaobjectUpdateInput'
+    );
+
+    // The specific regression: no null value may ever be sent on a `fields` write.
+    for (const req of requests) {
+      for (const field of req.variables?.metaobject?.fields ?? []) {
+        assert.notEqual(
+          field.value,
+          null,
+          `MetaobjectFieldInput.value is String! — null is schema-invalid (key: ${field.key})`
+        );
+      }
+    }
+  });
 });

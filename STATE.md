@@ -1,7 +1,7 @@
 # STATE.md — MPS Store Monitor — Chunked Work State
 
 **Repo:** `/mnt/d/mps-store-monitor` (public GitHub repo)  
-**Last updated:** 2026-10-10 (Chunk 11.2 — giveaway swap logic, awaiting review)  
+**Last updated:** 2026-10-11 (Chunk 11.3 — **critical clearing bug FIXED + live-verified; pushed to main; awaiting review**)  
 **Chunked workflow:** 5-7 steps per chunk, update after every step, checkpoint + approval between chunks.
 
 ---
@@ -16,8 +16,8 @@
 | **9 (Admin API inventory integration)** | ✅ done | Replace Storefront-API-only `stock.all` with real inventory data (inventoryPolicy, availableForSale) via Shopify Admin API; DENY-only alert rule + knownSoldOut allowlist |
 | **10 (burn-in & go-live)** | ✅ done | CI verification prep, operator docs (README), allowlist-refresh tooling, Telegram routing verification |
 | **11.1 (upcoming metaobject)** | ✅ done | Create separate `upcoming_flash_giveaway` metaobject type + entry for pre-staging daily giveaway values |
-| **11.2 (swap logic)** | 🟡 awaiting review | 02:00-Chicago DST-aware gate, Admin API metaobject read/write, swap+clear module, Telegram alert, 17 new unit tests |
-| **11.3 (workflow wiring)** | ⬜ not started | `giveaway-swap.yml`, gated fallback in `monitor.yml`, cron-job.org 02:00 Chicago job, live swap verification |
+| **11.2 (swap logic)** | ✅ done | 02:00-Chicago DST-aware gate, Admin API metaobject read/write, swap+clear module, Telegram alert, 17 new unit tests — **approved 2026-10-10** |
+| **11.3 (workflow wiring)** | ▶ in progress | `giveaway-swap.yml`, gated fallback in `monitor.yml`, cron-job.org 02:00 Chicago job, live swap verification |
 
 ---
 
@@ -42,7 +42,8 @@
 - [x] Step 4: `src/alerting/telegram.js` — added `formatSwapMessage()` (HTML parse mode, `escapeHtml` on every
       interpolated field value; success / nothing-staged / error variants; values >60 chars truncated).
 - [x] Step 5: `src/giveaway/swap.js` (new) — `runGiveawaySwap()` promotes all non-empty staged fields into the live
-      entry, then clears them on the staging entry (`value: null`). CLI runner with `--dry-run`, stamp at
+      entry, then clears them on the staging entry (originally via `value: null` — **schema-invalid, replaced in
+      Chunk 11.3 Step 7 with `replaceMetaobjectValues({ values: {} })`**). CLI runner with `--dry-run`, stamp at
       `state/giveaway-swap-date.txt`, Telegram dispatch. CLI wrapped in an ESM `isMain` guard
       (`process.argv[1] === fileURLToPath(import.meta.url)`) so importing it in tests does not trigger `process.exit`.
 - [x] Step 6: Tests — `tests/unit/giveaway-swap.test.js` (9 tests: gate-closed, nothing-staged, missing staging entry,
@@ -52,7 +53,85 @@
 - [x] Step 7: Live dry-run — `node src/giveaway/swap.js --dry-run` against the real store: auth OK (no 401), staging
       handle `upcoming-flash-giveaway` resolved, gate correctly OPEN (05:58 CDT, no stamp), result `nothing-staged`
       (entry exists but no values staged yet), **no stamp written**. Confirms the read path end-to-end.
-- [ ] Step 8: Checkpoint — awaiting user approval before Chunk 11.3.
+- [x] Step 8: Checkpoint — **approved 2026-10-10**. Chunk 11.3 started.
+
+#### Chunk 11.3 Steps
+
+- [x] Step 1 (bug fix found before wiring workflows): discovered that running `swap.js` from a 15-minute-interval
+      fallback step would alert on "nothing staged" ~88×/day, since the gate deliberately stays open all day
+      (stamp only written on a successful swap, by design, for late-staging self-heal). Fixed by making the
+      "nothing staged" Telegram warning **opt-in** via a new `--alert-if-empty` CLI flag — only the once-daily
+      dedicated workflow passes it; the monitor.yml fallback does not. Also updated `swap.js`'s header doc: the
+      stamp file `state/giveaway-swap-date.txt` is now documented as **git-committed** (not local-only as
+      originally written), since two workflows must share one authoritative stamp.
+- [x] Step 2: `.github/workflows/giveaway-swap.yml` (new) — dedicated workflow, `workflow_dispatch` with a
+      `trigger` choice input (`manual`/`scheduled`) mirroring `monitor.yml`'s convention. Steps: checkout →
+      setup-node 20 → `npm ci` → `node src/giveaway/swap.js --alert-if-empty` → commit
+      `state/giveaway-swap-date.txt` only if changed (`git add` + `git diff --cached --quiet` check, matching
+      the existing changelog-commit pattern) → `git pull --rebase --autostash` + push.
+- [x] Step 3: `.github/workflows/monitor.yml` — added "Giveaway daily swap (fallback)" step (`if: always()`,
+      runs `node src/giveaway/swap.js` with no `--alert-if-empty`) between "Check giveaway freshness" and
+      "Process results and send alerts". Folded the stamp commit into the existing "Commit giveaway changelog"
+      step (renamed "...& swap stamp") rather than duplicating commit logic — added
+      `state/giveaway-swap-date.txt` to its `git add` list.
+- [x] Step 4 (bug fix): both new commit steps originally ended the commit message with a literal blank-line +
+      `Co-Authored-By:` trailer inside a YAML `run: |` block scalar — the unindented trailer line terminated the
+      block early, breaking the rest of the step (caught by `python3 -c "yaml.safe_load(...)"` validation, which
+      threw `ParserError` on `monitor.yml` line 125). Fixed in both workflows with git's two-`-m` form
+      (`git commit -m "subject" -m "Co-Authored-By: ..."`, which git joins with a blank line), avoiding any
+      unindented continuation line. Re-validated: both files parse cleanly, both commit step bodies confirmed
+      intact (trailer + `git push` present).
+- [x] Step 5: Verification — `npm run test:unit` **134/134 still passing** (no regressions from the `--alert-if-empty`
+      flag or doc changes); both workflow YAMLs parse via `yaml.safe_load` with all steps present.
+- [ ] Step 6: Create the cron-job.org job — daily 02:00 America/Chicago → dispatch `giveaway-swap.yml` with
+      `trigger: scheduled`. **BLOCKED: needs the cron-job.org API key rotated first** (the old key was exposed in
+      a prior transcript — see Constraints).
+- [x] Step 7: Live full-cycle verification — **a CRITICAL BUG was found during the pre-verification recon, fixed,
+      and the fix live-verified against the real Admin API.**
+  - Read-only inspection (`tmp/inspect-entries.mjs`): LIVE `giveaway/mps-giveaway` (`gid://…/87942103277`) has 8/8
+    daily fields populated (end date `October 11, 2026`); STAGING `upcoming_flash_giveaway/upcoming-flash-giveaway`
+    (`gid://…/586361897197`) has 8/8 populated with **real operator-staged values for tomorrow** (end date
+    `October 12, 2026`, distinct image GIDs). → The operator is actively using the system, so the destructive
+    `tmp/test-clearing.mjs` was NOT run (it would have wiped tomorrow's giveaway). The standing `value: null` open
+    item was investigated by schema introspection instead of tested destructively — which is what caught the bug.
+  - **🔴 BUG (now fixed) — `value: null` clearing was schema-invalid.** Shopify's `MetaobjectFieldInput.value` is
+    `String!` (non-nullable). Confirmed two ways: (1) official docs (shopify.dev/.../MetaobjectFieldInput),
+    (2) live GraphQL introspection against the deployed 2026-10 schema (`__type` → `value: NON_NULL(String)`).
+    The old clear step built `fields: [{key, value: null}]`; GraphQL rejects `null` for a `String!` variable at
+    coercion time — **it never reaches Shopify's resolver**, so it failed for EVERY field type, not just
+    `file_reference`/`list.*`.
+  - **Blast radius it would have had (nightly, 02:00 Chicago):** promote-to-live succeeds ✅ → clear-staging throws
+    → exception caught in `main()` → **FAILED Telegram alert** ❌ → `process.exit(1)` before `writeStamp` → **stamp
+    never written** ❌ → gate stays open → cycle repeats → recurring FAILED alerts even though the live giveaway
+    had actually updated correctly.
+  - **Why unit tests missed it:** the swap tests use a mocked `makeFetcher` with canned responses; a mock cannot
+    enforce Shopify's GraphQL schema, so the invalid payload was never rejected. No test asserted payload *shape*.
+  - **✅ FIX APPLIED (chosen over the earlier "just delete the clear step" proposal — clearing is kept):**
+    - `src/admin.js`: new exported `replaceMetaobjectValues()` using the mutually exclusive
+      `MetaobjectUpdateInput.values: JSON` input (**full replacement — omitted keys are cleared**). Also corrected
+      `updateMetaobjectFields`'s docstring, which falsely claimed `value: null` clears a field.
+    - `src/giveaway/swap.js`: clear step now calls `replaceMetaobjectValues({ values: {} })`. **Asymmetric writes
+      by design:** staging is cleared with a *full replacement* (safe — it holds exactly the 8 daily fields), while
+      the live entry is promoted with the *sparse* `fields` write (mandatory — a full replacement would wipe its
+      19 monthly fields). Module docstring documents both modes and why `value: null` cannot work.
+    - `tests/unit/giveaway-swap.test.js`: new schema-compliance regression guard using a **recording fetcher** that
+      captures raw request bodies and asserts promote-uses-`fields` / clear-uses-`values: {}` / no-`null`-anywhere.
+      This closes the mock blind spot that let the bug ship.
+  - **Live verification (`tmp/verify-clearing.mjs`, non-destructive):** created a throwaway
+    `upcoming_flash_giveaway` entry, populated 5 fields covering all the hard types —
+    `flash_giveaway_desktop_banner` (`file_reference`), `pdp_images` (`list.file_reference`),
+    `mps_announcement_bar_texts` (`list.single_line_text_field`), plus two text fields — then cleared it with
+    `replaceMetaobjectValues({ values: {} })` and re-read it: **all 5 fields cleared, 0 remaining.** Throwaway entry
+    deleted; the real staging/live entries were never touched (image GIDs were only read, never modified).
+    → **The long-standing `value: null` / `file_reference` / `list.*` open item is now CLOSED.**
+  - `npm run test:unit`: **135/135 passing** (134 + the new regression guard).
+  - Committed + pushed to `main`; `CHANGELOG-giveaways.md` updated with a deployment entry.
+  - **Remaining live step is automatic:** `monitor.yml` already runs on GitHub's native 15-min schedule
+    (`7,22,37,52 * * * *`) and calls `node src/giveaway/swap.js` as the self-healing fallback, so the first tick
+    after 02:00 America/Chicago tonight will promote the operator's real Oct 12 values and clear staging — a true
+    full-cycle run on real data, with a Telegram success alert. No manual dispatch needed (and none was forced, to
+    avoid promoting Oct 12 values early). **This does not depend on Step 6 / cron-job.org**; that job only adds the
+    dedicated once-daily caller that also sends the "nothing staged" reminder.
 
 ---
 

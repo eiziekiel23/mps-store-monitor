@@ -1,0 +1,94 @@
+name: Giveaway Daily Swap
+
+# WHY TWO TRIGGER TYPES
+# ─────────────────────
+# - schedule (cron-job.org external dispatcher via workflow_dispatch) fires daily
+#   at 02:00 America/Chicago, DST-adjusted by cron-job.org.
+# - workflow_dispatch (manual) lets the operator trigger a run at any time
+#   (e.g., to force-test the pipeline after staging values).
+#
+# The 02:00 gate is enforced by shouldRunGiveawaySwap() in src/schedule.js,
+# not by this workflow's cron expression. The dedicated swap workflow is the
+# only caller that passes --alert-if-empty; the monitor.yml fallback does not.
+#
+# STAMP PERSISTENCE (git-committed, not Actions-cached)
+# ──────────────────────────────────────────────────────
+# state/giveaway-swap-date.txt is committed to main so that both this workflow
+# and the monitor.yml fallback read the same authoritative stamp on checkout.
+# An Actions cache (rolling-key) cannot reliably share state across two
+# independent workflow triggers, and a cross-workflow cache lookup requires
+# extra tooling. The git-commit approach is identical to how
+# state/giveaway-snapshot.json is already persisted.
+
+on:
+  # Called by cron-job.org daily at 02:00 America/Chicago.
+  # The external scheduler must pass trigger: "scheduled" to engage the
+  # src/schedule.js gate (same convention as monitor.yml).
+  workflow_dispatch:
+    inputs:
+      trigger:
+        description: 'Who is calling (manual = operator, scheduled = cron-job.org)'
+        type: choice
+        options:
+          - manual
+          - scheduled
+        default: manual
+
+permissions:
+  contents: write
+
+jobs:
+  swap:
+    name: Swap daily giveaway values
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # ── Run the swap ────────────────────────────────────────────────────────
+      # --alert-if-empty: send a Telegram warning if nothing is staged (so the
+      # operator is reminded they may have forgotten). The monitor.yml fallback
+      # does NOT pass this flag — it runs every 15 minutes and would otherwise
+      # send ~88 "nothing staged" messages per day.
+      - name: Run giveaway value swap
+        env:
+          SHOPIFY_ADMIN_API_TOKEN: ${{ secrets.SHOPIFY_ADMIN_API_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: node src/giveaway/swap.js --alert-if-empty
+
+      # ── Persist the swap stamp ──────────────────────────────────────────────
+      # Only commits when the stamp file is new or changed. swap.js only writes
+      # it on a successful field promotion (not on "gate-not-open" or
+      # "nothing-staged"), so most runs have nothing to commit here.
+      #
+      # This workflow and monitor.yml both can commit the stamp, but git's
+      # concurrent rebase+autostash pattern (git pull --rebase --autostash +
+      # git push) ensures both converge on the latest version without conflicts.
+      - name: Commit swap stamp
+        if: always()
+        run: |
+          git config user.name  "mps-store-monitor[bot]"
+          git config user.email "mps-store-monitor[bot]@users.noreply.github.com"
+          git add state/giveaway-swap-date.txt
+          if git diff --cached --quiet; then
+            echo "No stamp change to commit."
+          else
+            # Two -m flags: git joins them with a blank line, giving a proper
+            # subject + trailer without an unindented heredoc (which would
+            # terminate this YAML block scalar).
+            git commit -m "chore(giveaway): persist swap stamp [skip ci]" \
+                       -m "Co-Authored-By: Claude <noreply@anthropic.com>"
+            git pull --rebase --autostash origin ${{ github.ref_name }} || true
+            git push origin HEAD:${{ github.ref_name }}
+          fi

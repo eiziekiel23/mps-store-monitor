@@ -19,10 +19,21 @@
  * ────────────────────────────
  * The operator populates the upcoming_flash_giveaway entry before 02:00 Chicago
  * on the day the giveaway should change. The swap promotes ALL non-empty fields
- * from upcoming into live, then clears those same fields in upcoming (sets
- * value: null). Clearing prevents a forgotten manual update from re-promoting
- * stale values again tomorrow. Subsequent cron ticks that same day find
- * nothing staged → nothing swapped → no redundant Telegram alerts.
+ * from upcoming into live (a sparse/partial write — admin.js:updateMetaobjectFields,
+ * using MetaobjectUpdateInput.fields), then wipes the ENTIRE staging entry (a full
+ * replacement — admin.js:replaceMetaobjectValues, using the mutually exclusive
+ * MetaobjectUpdateInput.values: {} — omitted keys are cleared). Clearing prevents a
+ * forgotten manual update from re-promoting stale values again tomorrow. Subsequent
+ * cron ticks that same day find nothing staged → nothing swapped → no redundant
+ * Telegram alerts.
+ *
+ * Full replacement is only safe here because the staging entry holds EXACTLY the 8
+ * daily swap fields and nothing else (verified live 2026-10-11) — a full replacement
+ * of the 27-field LIVE entry would wipe its 19 monthly fields, which is why the
+ * promote step above uses the sparse `fields` write instead. `value: null` on
+ * `fields` was tried first and does NOT work: MetaobjectFieldInput.value is String!
+ * (non-null) in Shopify's schema, so GraphQL rejects it at variable-validation time
+ * for every field type — confirmed via live schema introspection, 2026-10-11.
  *
  * If the operator forgets to stage before 02:00 but populates later that day
  * (e.g., 05:00), the next hourly tick at 06:00+ will still find the gate open
@@ -30,7 +41,22 @@
  * giveaway won't rotate until the next day if they miss 02:00 entirely.
  *
  * Usage (CLI):
- *   node src/giveaway/swap.js [--dry-run]
+ *   node src/giveaway/swap.js [--dry-run] [--alert-if-empty]
+ *
+ * WHY --alert-if-empty IS OPT-IN
+ * ──────────────────────────────
+ * "Nothing staged" is the NORMAL state for most of the day, and the gate
+ * deliberately stays open all day (see self-healing note above) because the
+ * stamp is only written on a successful swap. That combination means a caller
+ * running every 15 minutes would find `gate open + nothing staged` on EVERY
+ * tick from 02:00 to midnight — ~88 identical "you forgot to stage" Telegram
+ * messages a day.
+ *
+ * So the warning is opt-in, and only the dedicated once-daily 02:00 workflow
+ * passes the flag. That makes "at most one warning per day" a structural
+ * property of the caller rather than something this module has to track with
+ * a second stamp file. The high-frequency fallback caller in monitor.yml runs
+ * without the flag: it stays silent unless it actually swaps something.
  *
  * Env:
  *   SHOPIFY_ADMIN_API_TOKEN — required for Admin API mutations.
@@ -38,9 +64,15 @@
  * Outputs:
  *   state/giveaway-swap-date.txt — persisted one-line YYYY-MM-DD timestamp
  *                                  (Central time), used to gate one swap per day.
- *                                  NOT committed to git (like other state files).
+ *                                  COMMITTED to git, unlike the incident state
+ *                                  files, because two different workflows
+ *                                  (giveaway-swap.yml and the monitor.yml
+ *                                  fallback) must share one authoritative stamp.
+ *                                  A git checkout gives both the same value;
+ *                                  an Actions cache would not reliably.
  *
- *   Telegram alert on success, warning, or error (unless --dry-run).
+ *   Telegram alert on success or error; on "nothing staged" only when
+ *   --alert-if-empty is passed. Suppressed entirely by --dry-run.
  */
 
 import fs from 'node:fs';
@@ -48,7 +80,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import config from '../../config/monitor.config.js';
 import { getCentralTime, shouldRunGiveawaySwap } from '../schedule.js';
-import { fetchMetaobjectByHandle, updateMetaobjectFields } from '../admin.js';
+import { fetchMetaobjectByHandle, updateMetaobjectFields, replaceMetaobjectValues } from '../admin.js';
 import { formatSwapMessage, sendTelegram } from '../alerting/telegram.js';
 
 // Metaobject types and handles
@@ -165,13 +197,17 @@ export async function runGiveawaySwap({
     fetcher
   });
 
-  // Clear the staged fields so a forgotten update doesn't re-promote stale values tomorrow.
-  const clearFields = staged.map((f) => ({ key: f.key, value: null }));
-  await updateMetaobjectFields({
+  // Clear the staging entry entirely (a full replacement with values: {}).
+  // This is safe here because the staging entry contains ONLY the 8 daily swap
+  // fields. A full replacement prevents a forgotten manual update from re-promoting
+  // stale values again tomorrow. See the module docstring for why not to use
+  // value: null on fields (it violates the GraphQL schema: MetaobjectFieldInput.value
+  // is String!, not String).
+  await replaceMetaobjectValues({
     shop,
     token,
     id: upcoming.id,
-    fields: clearFields,
+    values: {},
     version,
     fetcher
   });
@@ -204,6 +240,9 @@ function writeStamp(filePath, value) {
 
 async function main() {
   const dryRun = process.argv.includes('--dry-run');
+  // See module-level docstring: "nothing staged" alerts are opt-in so the
+  // high-frequency monitor.yml fallback doesn't spam one per 15-minute tick.
+  const alertIfEmpty = process.argv.includes('--alert-if-empty');
   const token = process.env.SHOPIFY_ADMIN_API_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
   const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
@@ -253,14 +292,20 @@ async function main() {
   if (reason === 'nothing-staged') {
     console.log(`[giveaway/swap] Gate open but nothing staged to swap.`);
 
-    // Send warning alert to Telegram (operator may have forgotten).
-    const msg = formatSwapMessage({ swapped: [], reason: 'nothing-staged' });
-    if (msg && !dryRun && chatId && telegramToken) {
-      try {
-        await sendTelegram({ token: telegramToken, chatId, text: msg, dryRun });
-      } catch (telErr) {
-        console.error('[giveaway/swap] Failed to send Telegram alert:', telErr.message);
+    // Send warning alert only when explicitly requested (--alert-if-empty).
+    // The dedicated giveaway-swap.yml workflow passes this flag; the high-frequency
+    // monitor.yml fallback does not — so it stays silent when nothing is staged.
+    if (alertIfEmpty) {
+      const msg = formatSwapMessage({ swapped: [], reason: 'nothing-staged' });
+      if (msg && !dryRun && chatId && telegramToken) {
+        try {
+          await sendTelegram({ token: telegramToken, chatId, text: msg, dryRun });
+        } catch (telErr) {
+          console.error('[giveaway/swap] Failed to send Telegram alert:', telErr.message);
+        }
       }
+    } else {
+      console.log('[giveaway/swap] Skipping "nothing staged" alert (--alert-if-empty not passed)');
     }
 
     // DO NOT write the stamp — allow a late-staging operator to promote within the same day.

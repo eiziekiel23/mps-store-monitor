@@ -181,6 +181,7 @@ const METAOBJECT_UPDATE_MUTATION = `
   }
 `;
 
+
 /**
  * Read a single metaobject entry by its type + handle.
  *
@@ -247,12 +248,19 @@ export async function fetchMetaobjectByHandle({
  *
  * Only the keys passed in are touched; every other field on the entry is left
  * exactly as it was. That is what makes the swap safe to run against the live
- * giveaway entry, which carries 27 fields of which only the 7 daily ones rotate
+ * giveaway entry, which carries 27 fields of which only the 8 daily ones rotate
  * — the monthly fields are never named here and so never change.
  *
- * To CLEAR a field, pass `value: null`. Shopify rejects an empty string for
- * reference and list types, so null is the only portable "unset" across the
- * mixed field types the swap handles.
+ * This function CANNOT be used to clear a field: MetaobjectFieldInput.value is
+ * String! (non-null) in Shopify's schema, so `value: null` is rejected by GraphQL
+ * variable validation before any resolver runs (confirmed via live introspection,
+ * 2026-10-11) — it is not a per-field-type quirk, it fails for every field. To
+ * clear fields, use `replaceMetaobjectValues()` instead, which uses the mutually
+ * exclusive `values: JSON` input (full replacement; omitted keys are cleared).
+ *
+ * `userErrors` are raised as exceptions: a metaobjectUpdate can return HTTP 200
+ * with a populated userErrors array (e.g. an invalid file GID), which would
+ * otherwise read as a silent success.
  *
  * `userErrors` are raised as exceptions: a metaobjectUpdate can return HTTP 200
  * with a populated userErrors array (e.g. an invalid file GID), which would
@@ -297,6 +305,76 @@ export async function updateMetaobjectFields({
       .map((e) => `${(e.field ?? []).join('.') || '(no field)'}: ${e.message}`)
       .join('; ');
     throw new Error(`Admin API: metaobjectUpdate failed — ${summary}`);
+  }
+
+  const node = result.metaobject;
+  const updated = (node.fields ?? []).map((f) => ({ key: f.key, value: f.value ?? null }));
+  return {
+    id: node.id,
+    handle: node.handle,
+    fieldMap: Object.fromEntries(updated.map((f) => [f.key, f.value]))
+  };
+}
+
+/**
+ * Replace ALL fields on a metaobject entry at once using `values: JSON`.
+ *
+ * This is the correct way to CLEAR an entry. Unlike `updateMetaobjectFields` (which
+ * uses `fields: [MetaobjectFieldInput!]` and can only SET values — `value: null` is
+ * invalid because MetaobjectFieldInput.value is String!), the `values` input accepts
+ * a plain JSON object whose keys map to field definition keys. Any key present on the
+ * entry but ABSENT from the `values` map is cleared.
+ *
+ * Why this function exists:
+ *   The daily giveaway swap promotes staged fields into the live entry (partial write
+ *   → updateMetaobjectFields), then needs to wipe the staging entry clean so it does
+ *   not re-promote the same values next day. The staging entry contains ONLY the 8
+ *   daily swap fields (verified 2026-10-11), so replacing with `{}` safely clears it
+ *   all at once — no field-by-field null-passing needed.
+ *
+ * ⚠️  DO NOT use this on the live giveaway entry: it holds 27 fields, and a full
+ *   replacement would silently wipe the 19 monthly fields that are not part of the
+ *   daily swap. Use updateMetaobjectFields (sparse/partial write) for the live entry.
+ *
+ * MetaobjectUpdateInput.values and .fields are mutually exclusive; this function
+ * uses .values and never includes .fields in the payload.
+ *
+ * @param {{
+ *   shop: string,
+ *   token: string,
+ *   id: string,          metaobject GID
+ *   values?: Record<string, string>,  field values to keep (omitted keys are cleared)
+ *   version?: string,
+ *   fetcher?: typeof fetch
+ * }} opts
+ * @returns {Promise<{ id: string, handle: string, fieldMap: Record<string, string | null> }>}
+ */
+export async function replaceMetaobjectValues({
+  shop,
+  token,
+  id,
+  values = {},
+  version = '2026-10',
+  fetcher = fetch
+}) {
+  if (!token) throw new Error('Admin API: token is required');
+  if (!id) throw new Error('Admin API: metaobject id is required');
+
+  const endpoint = `https://${shop}/admin/api/${version}/graphql.json`;
+  const data = await adminGql(
+    endpoint,
+    token,
+    METAOBJECT_UPDATE_MUTATION,
+    { id, metaobject: { values } },
+    fetcher
+  );
+
+  const result = data.metaobjectUpdate;
+  if (result?.userErrors?.length) {
+    const summary = result.userErrors
+      .map((e) => `${(e.field ?? []).join('.') || '(no field)'}: ${e.message}`)
+      .join('; ');
+    throw new Error(`Admin API: metaobjectUpdate (replace) failed — ${summary}`);
   }
 
   const node = result.metaobject;

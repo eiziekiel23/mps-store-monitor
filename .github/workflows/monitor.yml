@@ -68,6 +68,23 @@ jobs:
           SHOPIFY_STOREFRONT_TOKEN: ${{ secrets.SHOPIFY_STOREFRONT_TOKEN }}
         run: node src/giveaway/check.js
 
+      # Self-healing fallback for the dedicated giveaway-swap.yml workflow (which
+      # fires once daily via cron-job.org at 02:00 America/Chicago). If that call
+      # is ever missed, the next 15-minute monitor tick still finds the gate open
+      # (shouldRunGiveawaySwap in src/schedule.js) and swaps.
+      #
+      # No --alert-if-empty here (unlike giveaway-swap.yml): this step runs every
+      # 15 minutes, and "nothing staged" is the normal all-day state once the
+      # gate opens — alerting on it here would send ~88 warnings/day. Only the
+      # once-daily dedicated workflow sends that reminder.
+      - name: Giveaway daily swap (fallback)
+        if: always()
+        env:
+          SHOPIFY_ADMIN_API_TOKEN: ${{ secrets.SHOPIFY_ADMIN_API_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: node src/giveaway/swap.js
+
       - name: Process results and send alerts
         if: always()
         env:
@@ -87,19 +104,25 @@ jobs:
           path: state/
           key: incident-state-v1-${{ github.run_id }}
 
-      - name: Commit giveaway changelog
+      - name: Commit giveaway changelog & swap stamp
         if: always()
         run: |
-          # The giveaway snapshot and changelog are persisted in git (not just the
-          # run-to-run cache) so the field-change history survives and is reviewable.
-          # Only these two paths are committed; incident state lives in the cache.
+          # The giveaway snapshot, changelog, and swap stamp are persisted in git
+          # (not just the run-to-run cache) so the field-change history survives,
+          # is reviewable, and both this workflow and giveaway-swap.yml can share
+          # one authoritative swap timestamp. Only these three paths are committed;
+          # incident state lives in the Actions cache.
           git config user.name "mps-store-monitor[bot]"
           git config user.email "mps-store-monitor@users.noreply.github.com"
-          git add state/giveaway-snapshot.json CHANGELOG-giveaways.md
+          git add state/giveaway-snapshot.json state/giveaway-swap-date.txt CHANGELOG-giveaways.md
           if git diff --cached --quiet; then
             echo "No giveaway changes to commit."
           else
-            git commit -m "chore(giveaway): update changelog [skip ci]"
+            # Two -m flags: git joins them with a blank line, giving a proper
+            # subject + trailer without an unindented heredoc (which would
+            # terminate this YAML block scalar).
+            git commit -m "chore(giveaway): update changelog [skip ci]" \
+                       -m "Co-Authored-By: Claude <noreply@anthropic.com>"
             # Rebase onto any concurrent push so overlapping runs don't fail the push.
             git pull --rebase --autostash origin ${{ github.ref_name }} || true
             git push origin HEAD:${{ github.ref_name }}
