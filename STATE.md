@@ -17,7 +17,7 @@
 | **10 (burn-in & go-live)** | ✅ done | CI verification prep, operator docs (README), allowlist-refresh tooling, Telegram routing verification |
 | **11.1 (upcoming metaobject)** | ✅ done | Create separate `upcoming_flash_giveaway` metaobject type + entry for pre-staging daily giveaway values |
 | **11.2 (swap logic)** | ✅ done | 02:00-Chicago DST-aware gate, Admin API metaobject read/write, swap+clear module, Telegram alert, 17 new unit tests — **approved 2026-10-10** |
-| **11.3 (workflow wiring)** | ▶ in progress | `giveaway-swap.yml`, gated fallback in `monitor.yml`, cron-job.org 02:00 Chicago job, live swap verification |
+| **11.3 (workflow wiring)** | 🟡 awaiting review | `giveaway-swap.yml`, gated fallback in `monitor.yml`, clearing-bug fix + live verification. Pushed `f0e85ed`. Only cron-job.org job (Step 6) remains, blocked on API-key rotation |
 
 ---
 
@@ -254,11 +254,47 @@
 - **FEATURE — 2026-10-10 (hourly status detail report):** user's request "we need this to run hourly and have broken down detail aside from the daily giveaway changes report" — the full status digest (all 19 checks grouped by category, with detail/timing per check) now dispatches hourly on cron runs (was manual-only before). The giveaway rotation block is kept separate (its own dispatch, daily-gated) so the two reports stay distinct. Updated `formatStatusMessage()` to accept an optional `title` parameter (escapes HTML, defaults to "Status Report") so the Telegram header distinguishes "Hourly Status Report" (cron) from "Manual Run Report" (workflow_dispatch). Incident alerts (NEW FAILURES / STILL FAILING / RECOVERED) remain transition-based and independent. Verified: 100/100 unit tests (added 2 new title tests); hourly cron run now sends full digest with correct "Hourly Status Report" header.
 - **FEATURE — 2026-10-10 (15-min cron resilience + hourly digest gate):** user reported the hourly check "not running at all or inconsistent" (last run ~10 AM Manila, checked at 3:38 PM — a 5.5h gap). Confirmed via the public GitHub Actions REST API (no `gh` auth needed on a public repo) that scheduled runs were genuinely **dropped**, not delayed: only 3 scheduled runs across 2+ days when hourly `0 * * * *` should have produced ~50. `0 * * * *` is the most congested minute on GitHub's shared cron scheduler. Installed `gh` CLI user-locally (`~/.local/bin/gh`, no sudo — not authenticated; `gh auth login` left for the user) for future live run-history checks. Fix (user chose option 2, the aggressive schedule): `.github/workflows/monitor.yml` cron changed to `7,22,37,52 * * * *` (even 15-min cadence, offset off the congested :00/:30 marks). To preserve the user's "hourly" report intent rather than send 4×/hour, added `getHourStamp(now?)` + `shouldSendHourlyStatusReport({isManualRun, stamp, now?})` to `src/schedule.js` (UTC-hour key — immune to DST repeated/skipped local hours) and gated the status-digest dispatch in `src/report.js` behind a new `state/hourly-status-report-hour.txt` stamp (read/write helpers mirroring the daily-report pattern). Incident alerts (`events.length > 0` dispatch) are deliberately left ungated so failures still surface within 15 minutes. Verified: 109/109 unit tests (9 new: 4 `getHourStamp`, 5 `shouldSendHourlyStatusReport`, incl. self-heal-after-dropped-tick and manual-bypass-doesn't-corrupt-cron-gating); 5-scenario sandbox against the real `report.js` (first-tick sends+stamps, same-hour second tick skips, stale-stamp self-heals, manual bypasses, cron-after-manual still gates correctly) — all passed. YAML + cron expression validated via PyYAML (even 15-min gaps, avoids :00/:30, `workflow_dispatch` preserved). **Watch-point flagged, not yet acted on:** `cart.add_pdp`/`cart.entries` hit `/cart/add.js` 4× as often now; if rate-limit flakes appear during burn-in, split cart checks onto a separate, lower-frequency schedule.
 
+- **PRODUCTION BUG — CAUGHT PRE-DEPLOY & RESOLVED 2026-10-11 (metaobject field clearing):** the daily swap's
+  staging-clear step called `updateMetaobjectFields` with `fields: [{key, value: null}]`, but Shopify's
+  `MetaobjectFieldInput.value` is **`String!` (non-nullable)**. GraphQL rejects the `null` at variable-coercion
+  time, so the mutation never reaches the resolver — this failed for **every** field type, not just the
+  `file_reference`/`list.*` types the old open item suspected. Confirmed two independent ways: official docs, and
+  live `__type` introspection against the deployed 2026-10 schema (`value: NON_NULL(String)`). **Why it was
+  dangerous:** the promote-to-live mutation runs *first* and succeeds, so each nightly run would have correctly
+  updated the live giveaway, then thrown on the clear, sent a **FAILED** Telegram alert, and `process.exit(1)`
+  before `writeStamp` — leaving the gate open so the whole cycle repeated indefinitely. The operator would have
+  seen nightly failure alerts for a system that was actually rotating the giveaway correctly. **Why tests missed
+  it:** the swap's unit tests inject a mocked `makeFetcher` with canned responses; a mock cannot enforce
+  Shopify's GraphQL schema, and no test asserted the request *payload shape*. **Fix:** new
+  `replaceMetaobjectValues()` in `src/admin.js` using the mutually exclusive `MetaobjectUpdateInput.values: JSON`
+  input (full replacement — omitted keys are cleared); `swap.js` clears staging with `values: {}`. The two write
+  modes are now **deliberately asymmetric**: live uses the sparse `fields` write (27 fields — a full replacement
+  would wipe its 19 monthly fields), staging uses full replacement (only ever holds the 8 daily fields).
+  **Live-verified non-destructively:** `tmp/verify-clearing.mjs` created a throwaway `upcoming_flash_giveaway`
+  entry populated with all the hard types (`file_reference`, `list.file_reference`,
+  `list.single_line_text_field`), cleared it with `values: {}`, re-read it → **all fields cleared**; throwaway
+  entry deleted, real entries never touched. A schema-compliance regression guard (recording fetcher asserting
+  promote-uses-`fields` / clear-uses-`values` / no-`null`-anywhere) now closes the mock blind spot. 135/135 unit
+  tests. Pushed `f0e85ed`.
+
 ---
 
 ## Next Step
 
-All 8 roadmap chunks are then complete; the monitor is in steady-state operation. Ongoing maintenance is `npm run allowlist` whenever a limited product restocks.
+**Chunk 11.3 is 🟡 awaiting review** (pushed `f0e85ed`). Step 6 (cron-job.org job) is the only remaining item and
+is blocked on the user rotating the exposed cron-job.org API key.
+
+**Tonight's automatic live full-cycle run — no action needed.** `monitor.yml` already runs on GitHub's native
+15-minute schedule (`7,22,37,52 * * * *`) and calls `node src/giveaway/swap.js` as the self-healing fallback. The
+first tick after **02:00 America/Chicago** will find the gate open, promote the operator's already-staged
+**Oct 12** values into the live entry, clear staging via `values: {}`, write the stamp, and send a Telegram
+success alert. This is a genuine full-cycle run on real data and does **not** depend on cron-job.org. **What to
+check tomorrow:** (1) a Telegram swap-success alert arrived; (2) the live giveaway shows the Oct 12 values;
+(3) the staging entry is empty; (4) `state/giveaway-swap-date.txt` was bot-committed with `2026-10-12`.
+
+**User-side security housekeeping (unchanged, still outstanding):** rotate the GitHub fine-grained PAT and the
+cron-job.org API key — both appeared in earlier session transcripts. Step 6 stays blocked until the cron-job.org
+key is rotated.
 
 **After Chunk 10 approval — go-live is a user-side sequence (no `gh` CLI in this environment):**
 
