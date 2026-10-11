@@ -1,7 +1,7 @@
 # STATE.md — MPS Store Monitor — Chunked Work State
 
 **Repo:** `/mnt/d/mps-store-monitor` (public GitHub repo)  
-**Last updated:** 2026-10-11 (Chunk 11.3 — **critical clearing bug FIXED + live-verified; pushed to main; awaiting review**)  
+**Last updated:** 2026-10-11 (Chunk 11.3 — clearing bug fixed + live-verified; **cron-job.org job created (jobId=8622147)**; pushed to main; awaiting tonight's live full-cycle run + review)  
 **Chunked workflow:** 5-7 steps per chunk, update after every step, checkpoint + approval between chunks.
 
 ---
@@ -17,7 +17,7 @@
 | **10 (burn-in & go-live)** | ✅ done | CI verification prep, operator docs (README), allowlist-refresh tooling, Telegram routing verification |
 | **11.1 (upcoming metaobject)** | ✅ done | Create separate `upcoming_flash_giveaway` metaobject type + entry for pre-staging daily giveaway values |
 | **11.2 (swap logic)** | ✅ done | 02:00-Chicago DST-aware gate, Admin API metaobject read/write, swap+clear module, Telegram alert, 17 new unit tests — **approved 2026-10-10** |
-| **11.3 (workflow wiring)** | 🟡 awaiting review | `giveaway-swap.yml`, gated fallback in `monitor.yml`, clearing-bug fix + live verification. Pushed `f0e85ed`. Only cron-job.org job (Step 6) remains, blocked on API-key rotation |
+| **11.3 (workflow wiring)** | 🟡 awaiting review | `giveaway-swap.yml`, gated fallback in `monitor.yml`, clearing-bug fix + live verification, cron-job.org job created. Pushed `f0e85ed`. Awaiting tonight's live full-cycle confirmation |
 
 ---
 
@@ -83,9 +83,15 @@
       intact (trailer + `git push` present).
 - [x] Step 5: Verification — `npm run test:unit` **134/134 still passing** (no regressions from the `--alert-if-empty`
       flag or doc changes); both workflow YAMLs parse via `yaml.safe_load` with all steps present.
-- [ ] Step 6: Create the cron-job.org job — daily 02:00 America/Chicago → dispatch `giveaway-swap.yml` with
-      `trigger: scheduled`. **BLOCKED: needs the cron-job.org API key rotated first** (the old key was exposed in
-      a prior transcript — see Constraints).
+- [x] Step 6: Create the cron-job.org job — ✅ **COMPLETED 2026-10-11 01:12 CDT**. Idempotent creation script
+      `tmp/create-cronjob.mjs` (lists jobs, guards against duplication, creates if needed). Job details: `jobId=8622147`,
+      title "MPS Giveaway Daily Swap", enabled, POST method, GitHub API dispatch URL, Authorization header with GitHub
+      PAT, body `{"ref":"main","inputs":{"trigger":"scheduled"}}`, schedule `timezone=America/Chicago, hours=[2],
+      minutes=[0], mdays=[-1], months=[-1], wdays=[-1]` (every calendar day at 02:00 Central, DST-aware). Verified
+      config read-back: all fields correct. **Secrets sourced from env file (not command line) to avoid credential
+      leakage in bash history.** Current time 01:09 CDT (before the gate), so automatic 02:00 run tonight will
+      dispatch. **Key rotation still outstanding (user action, later):** both exposed keys (GitHub PAT and cron-job.org
+      API key) should be regenerated once confirmed the system runs successfully overnight.
 - [x] Step 7: Live full-cycle verification — **a CRITICAL BUG was found during the pre-verification recon, fixed,
       and the fix live-verified against the real Admin API.**
   - Read-only inspection (`tmp/inspect-entries.mjs`): LIVE `giveaway/mps-giveaway` (`gid://…/87942103277`) has 8/8
@@ -281,8 +287,7 @@
 
 ## Next Step
 
-**Chunk 11.3 is 🟡 awaiting review** (pushed `f0e85ed`). Step 6 (cron-job.org job) is the only remaining item and
-is blocked on the user rotating the exposed cron-job.org API key.
+**Chunk 11.3 is 🟡 awaiting review** (pushed `f0e85ed`). All steps complete (Step 6 created 2026-10-11 01:12 CDT).
 
 **Tonight's automatic live full-cycle run — no action needed.** `monitor.yml` already runs on GitHub's native
 15-minute schedule (`7,22,37,52 * * * *`) and calls `node src/giveaway/swap.js` as the self-healing fallback. The
@@ -292,9 +297,10 @@ success alert. This is a genuine full-cycle run on real data and does **not** de
 check tomorrow:** (1) a Telegram swap-success alert arrived; (2) the live giveaway shows the Oct 12 values;
 (3) the staging entry is empty; (4) `state/giveaway-swap-date.txt` was bot-committed with `2026-10-12`.
 
-**User-side security housekeeping (unchanged, still outstanding):** rotate the GitHub fine-grained PAT and the
-cron-job.org API key — both appeared in earlier session transcripts. Step 6 stays blocked until the cron-job.org
-key is rotated.
+**User-side security housekeeping (pending, non-blocking):** rotate the GitHub fine-grained PAT and the
+cron-job.org API key — both appeared in earlier session transcripts and were used to create the job. Action is
+recommended *after* confirming a successful overnight run (so the new credentials are proven working before
+decommissioning the old ones).
 
 **After Chunk 10 approval — go-live is a user-side sequence (no `gh` CLI in this environment):**
 
