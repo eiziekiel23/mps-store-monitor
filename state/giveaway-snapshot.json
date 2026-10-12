@@ -5,9 +5,9 @@
     "custom_block_text": "Today's Flash Giveaways and",
     "end_date": "November 2, 2026 02:00:00",
     "flash_giveaway_desktop_banner": "https://cdn.shopify.com/s/files/1/0640/9381/5021/files/DESKTOP_-_OCT_12_2026_28a96295-eafb-4ac3-925d-1aba297f120d.webp?v=1791807867",
-    "flash_giveaway_end_date": "October 13, 2026 02:00:00",
+    "flash_giveaway_end_date": "October 14, 2026 02:00:00",
     "flash_giveaway_mobile_banner": "https://cdn.shopify.com/s/files/1/0640/9381/5021/files/MOBILE_-_OCT_12_2026_99f049e9-53de-4fa0-97a4-84dbc7960d32.webp?v=1791807870",
-    "flash_giveaway_start_date": "October 12, 2026 00:00:01",
+    "flash_giveaway_start_date": "October 13, 2026 00:00:01",
     "flash_giveaway_timer_copy": "GIVEAWAYS END IN:",
     "giveaway_timer_copy": "GIVEAWAY ENDS IN:",
     "has_overlapping_giveaway": "false",
@@ -22,9 +22,25 @@
     "video_url": "https://cdn.shopify.com/videos/c/o/v/fb817b0f3da742ceb9a595313d78518e.mp4",
     "vip_order_protection_multiplier": "25"
   },
-  "lastRotationMs": 1791810618798,
-  "updatedAt": "2026-10-12T17:12:42.993Z",
+  "lastRotationMs": 1791827642206,
+  "updatedAt": "2026-10-12T17:54:02.206Z",
   "entries": [
+    {
+      "at": "2026-10-12T17:54:02.206Z",
+      "rotated": true,
+      "changes": [
+        {
+          "field": "flash_giveaway_end_date",
+          "old": "October 13, 2026 02:00:00",
+          "new": "October 14, 2026 02:00:00"
+        },
+        {
+          "field": "flash_giveaway_start_date",
+          "old": "October 12, 2026 00:00:01",
+          "new": "October 13, 2026 00:00:01"
+        }
+      ]
+    },
     {
       "at": "2026-10-12T13:10:18.798Z",
       "rotated": true,
