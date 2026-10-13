@@ -1,7 +1,7 @@
 # STATE.md — MPS Store Monitor — Chunked Work State
 
 **Repo:** `/mnt/d/mps-store-monitor` (public GitHub repo)  
-**Last updated:** 2026-10-13 (**schedule change at user request**: giveaway swap gate 02:00 → **01:55** America/Chicago, and `monitor.yml` cron every-15-min → **every 8 hours / 3× per day**; 138/138 unit tests)  
+**Last updated:** 2026-10-13 (**schedule change at user request**: giveaway swap gate 02:00 → **01:55** America/Chicago, and `monitor.yml` cron every-15-min → **every 8 hours / 3× per day**; both cron-job.org jobs patched; cache-collision bug in monitor.yml discovered + fixed (commit `012d067`); 138/138 unit tests green; Chunk 11.3 verification in progress)  
 **Chunked workflow:** 5-7 steps per chunk, update after every step, checkpoint + approval between chunks.
 
 ---
@@ -354,9 +354,27 @@ values** (retention, changed 2026-10-13 — an empty staging entry would now be 
 `monitor.yml` runs appear in the Actions history for the day** (confirms the new cron is being honored — GitHub
 drops ticks, and at 3×/day a dropped tick is proportionally far more costly than it was at 96×/day).
 
-**⚠️ Verification still outstanding.** The overnight runs of 2026-10-12 and 2026-10-13 were never reported back,
-so Chunk 11.3's live full-cycle confirmation remains unverified. Worth checking the actual GitHub Actions run
-history and the Telegram log. Note the old expectation "staging entry is empty" no longer applies.
+**INCIDENT DIAGNOSIS & FIX — 2026-10-13 (same-day root-cause + mitigation):**
+
+User alarm: "Oct 12–13 overnight, giveaway-swap fired at 10:14 PM Chicago instead of 01:55 AM. Also monitor.yml ran hourly instead of 3×/day."
+
+**Root causes identified:**
+
+1. **Hourly cadence:** cron-job.org job `8616859` was set to `hours=[-1]` (every hour) instead of `[0,8,16]` UTC. This was **already fixed** (see Decisions above, job patched and verified). The last run on the old schedule was 03:07 UTC Oct 13 (10:07 PM Chicago) — coincidentally the run where the user observed the swap.
+
+2. **Unexpected swap at 10 PM:** This was **not a scheduling bug, but a real cache collision bug** in `monitor.yml`. Investigation traced the stamp file (`state/giveaway-swap-date.txt`) through git history: it bounced between `2026-10-12` (correct, committed by the 02:00 dedicated swap) and `2026-10-11` (reverted, committed hours later by monitor.yml). Every time monitor.yml ran, its Actions-cache restore step (`Restore incident state from cache`) restored the entire `state/` directory from a stale cache entry **after** `actions/checkout`, silently overwriting the freshly-checked-out (correct, from git) stamp file with an old cached snapshot. The "Commit giveaway changelog & swap stamp" step then ran `git add state/giveaway-swap-date.txt` alongside the legitimately-changed snapshot/changelog files, bundling the cache-corrupted stamp into a single commit that **reverted the gate**. Commit history: `797d9fa` (07:00 stamp=2026-10-12), `1987068` (07:10 stamp=2026-10-11 reverted), `08aedf0` (17:12 stamp=2026-10-12), `7c52e3f` (17:54 stamp=2026-10-11 reverted), `5e6487f` (03:14 Oct 13 stamp=2026-10-12 from real swap). By 10:14 PM Chicago the gate had been re-opened by the cache reversion, so the monitor.yml fallback step correctly found `stamp('2026-10-11') !== date('2026-10-12')` and promoted a real swap (7 fields changed).
+
+**Fix (commit `012d067`, pushed):** added a new step `Restore git-tracked swap state (override cache)` immediately after the cache-restore step:
+```yaml
+- name: Restore git-tracked swap state (override cache)
+  run: |
+    git checkout -- state/giveaway-swap-date.txt state/giveaway-snapshot.json 2>/dev/null || true
+```
+This re-checks out the two git-tracked files from the working tree, so the authoritative committed values always win over a stale cache entry. The command is safe and no-ops harmlessly if the cache did not restore them. **Verified:** YAML parses cleanly, 138/138 unit tests pass, no code path is affected (YAML-only workflow change).
+
+**What this fixes:** the cache cannot revert the swap stamp anymore. The dedicated swap's stamp will stay committed, the gate stays closed all day, and the fallback step will not fire unless a real new swap opened it (legitimately, by Central date changing at midnight).
+
+**What it does NOT fix:** the pre-existing Telegram 400 "can't parse entities" failures on monitor.yml runs 21:07 / 22:07 / 02:07 / 03:07 UTC — that's a separate bug in the HTML formatting (see Open Items, resolved 2026-10-10, but a residual issue may still exist).
 
 **User-side security housekeeping (pending, non-blocking):** rotate the GitHub fine-grained PAT and the
 cron-job.org API key — both appeared in earlier session transcripts and were used to create the job. Action is
