@@ -4,11 +4,19 @@
  *
  * Fires once per day at/after 01:55 America/Chicago, auto-adjusting for DST
  * (changed from 02:00 on 2026-10-13; gate is enforced in src/schedule.js).
- * Idempotent: every monitor tick at/after 01:55 applies the same timestamp-stamped
- * gate; the first tick to find an open gate swaps, the rest of the day log and skip.
+ * Idempotent: every invocation at/after 01:55 applies the same date-stamped gate;
+ * the first run to find an open gate swaps, any later run that day logs and skips.
  * The gate stays open all day (gate is "date did not yet match today's swap" not
- * "hour is exactly 01:55"), so a self-healing fallback is effective even if run
- * fewer than hourly — presently 3× per day via monitor.yml's native cron.
+ * "hour is exactly 01:55"), so a re-run later in the day still self-heals a missed
+ * morning swap.
+ *
+ * SOLE CALLER (changed 2026-10-13)
+ * ────────────────────────────────
+ * .github/workflows/giveaway-swap.yml is the only workflow that runs this, once
+ * daily at 01:55 Chicago via cron-job.org. monitor.yml previously ran it as a
+ * self-healing fallback on every tick; that step was removed at operator request
+ * (see STATE.md). Consequence: the all-day gate still self-heals, but only a
+ * manual/extra dispatch of giveaway-swap.yml can act on it.
  *
  * WHY SEPARATE METAOBJECTS (UPCOMING vs. LIVE)
  * ───────────────────────────────────────────
@@ -59,19 +67,17 @@
  *
  * WHY --alert-if-empty IS OPT-IN
  * ──────────────────────────────
- * The gate deliberately stays open all day (see self-healing note above) because
- * the stamp is only written on a successful swap. If staging is empty, every
- * fallback tick for the rest of the day therefore finds `gate open + nothing
- * staged` and would emit its own "you forgot to stage" Telegram message. That was
- * ~88 duplicates a day when monitor.yml ran every 15 minutes; at the current
- * 3×/day cadence it is only a couple — but the duplication is a property of the
- * gate, not of the cadence, so the fix stays cadence-independent.
+ * The gate deliberately stays open all day because the stamp is only written on a
+ * successful swap. If staging is empty, any caller that ran repeatedly would emit
+ * its own "you forgot to stage" message per tick. monitor.yml ran this without the
+ * flag to avoid duplicates when it was a high-frequency fallback. The flag is
+ * kept opt-in rather than forced because the gate property (not the cadence) is
+ * the source of the duplication risk — and adding a new caller in future should
+ * not silently inherit the alert.
  *
- * So the warning is opt-in, and only the dedicated once-daily 01:55 workflow
- * passes the flag. That makes "at most one warning per day" a structural
- * property of the caller rather than something this module has to track with
- * a second stamp file. The fallback caller in monitor.yml runs without the flag:
- * it stays silent unless it actually swaps something.
+ * giveaway-swap.yml is currently the only caller and always passes --alert-if-empty,
+ * so "at most one warning per day" is a structural property of the once-daily
+ * dedicated workflow rather than something this module tracks with a second stamp.
  *
  * Since staging values are now retained (see above), an empty staging entry is no
  * longer the normal daytime state — it means the entry was never populated or was
@@ -91,8 +97,8 @@
  *                                  A git checkout gives both the same value;
  *                                  an Actions cache would not reliably.
  *
- *   Telegram alert on success or error; on "nothing staged" only when
- *   --alert-if-empty is passed. Suppressed entirely by --dry-run.
+ *   Telegram alert: sent on success or error unconditionally; on "nothing staged"
+ *   only when --alert-if-empty is passed. Suppressed entirely by --dry-run.
  */
 
 import fs from 'node:fs';

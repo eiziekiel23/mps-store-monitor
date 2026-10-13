@@ -1,7 +1,7 @@
 # STATE.md — MPS Store Monitor — Chunked Work State
 
 **Repo:** `/mnt/d/mps-store-monitor` (public GitHub repo)  
-**Last updated:** 2026-10-13 (**schedule change at user request**: giveaway swap gate 02:00 → **01:55** America/Chicago, and `monitor.yml` cron every-15-min → **every 8 hours / 3× per day**; both cron-job.org jobs patched; cache-collision bug in monitor.yml discovered + fixed (commit `012d067`); 138/138 unit tests green; Chunk 11.3 verification in progress)  
+**Last updated:** 2026-10-13 (**schedule change at user request**: giveaway swap gate 02:00 → **01:55** America/Chicago, `monitor.yml` cron every-15-min → **every 8 hours / 3× per day**; both cron-job.org jobs patched; cache-collision bug discovered + fixed; giveaway-swap fallback removed from monitor.yml by user request (commit `9491790`); 138/138 unit tests green)  
 **Chunked workflow:** 5-7 steps per chunk, update after every step, checkpoint + approval between chunks.
 
 ---
@@ -375,6 +375,25 @@ This re-checks out the two git-tracked files from the working tree, so the autho
 **What this fixes:** the cache cannot revert the swap stamp anymore. The dedicated swap's stamp will stay committed, the gate stays closed all day, and the fallback step will not fire unless a real new swap opened it (legitimately, by Central date changing at midnight).
 
 **What it does NOT fix:** the pre-existing Telegram 400 "can't parse entities" failures on monitor.yml runs 21:07 / 22:07 / 02:07 / 03:07 UTC — that's a separate bug in the HTML formatting (see Open Items, resolved 2026-10-10, but a residual issue may still exist).
+
+**ARCHITECTURE CHANGE — 2026-10-13 (user request: "remove the giveaway swap from monitoring"):**
+The giveaway-swap **fallback** step was removed from `monitor.yml` entirely (commit `9491790`). Rationale:
+the fallback's self-healing value (catch a missed 02:00 dedicated swap on the next tick) collapsed once
+`monitor.yml` dropped from every-15-min to 3×/day — a missed swap would now go up to 8 hours unnoticed, while
+the fallback still carried all the risk (it was the step that performed the unintended 10 PM Chicago swap during
+the cache-collision incident). **The dedicated `giveaway-swap.yml` (cron-job.org job `8622147`, 01:55 Chicago)
+is now the SOLE executor of the daily swap.** Removed from `monitor.yml`:
+- the "Giveaway daily swap (fallback)" step;
+- the "Restore git-tracked swap state (override cache)" step added earlier the same day (its only purpose was
+  protecting the swap stamp, now moot in monitor.yml);
+- `state/giveaway-swap-date.txt` from the commit step's `git add` (renamed "Commit giveaway changelog & swap
+  stamp" → "Commit giveaway changelog"). monitor.yml still commits `state/giveaway-snapshot.json` +
+  `CHANGELOG-giveaways.md` (written by `check.js`).
+**Consequence to watch:** there is no longer any fallback if the 01:55 dedicated swap is missed (cron-job.org
+down, GitHub dispatch dropped, or staging not populated in time). The gate's all-day self-healing still works —
+but only `giveaway-swap.yml` can act on it, and it only runs once daily at 01:55. If reliability becomes a
+concern, a lighter fallback (e.g. a second cron-job.org dispatch of giveaway-swap.yml later in the day) is
+preferable to re-adding the swap into monitor.yml. Verified: YAML valid, 138/138 unit tests pass.
 
 **User-side security housekeeping (pending, non-blocking):** rotate the GitHub fine-grained PAT and the
 cron-job.org API key — both appeared in earlier session transcripts and were used to create the job. Action is

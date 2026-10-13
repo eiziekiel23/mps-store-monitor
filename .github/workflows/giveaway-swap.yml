@@ -8,17 +8,17 @@ name: Giveaway Daily Swap
 #   (e.g., to force-test the pipeline after staging values).
 #
 # The 01:55 gate is enforced by shouldRunGiveawaySwap() in src/schedule.js,
-# not by this workflow's cron expression. The dedicated swap workflow is the
-# only caller that passes --alert-if-empty; the monitor.yml fallback does not.
+# not by this workflow's cron expression. This workflow is the SOLE executor of
+# the daily swap (the monitor.yml fallback was removed 2026-10-13 — see STATE.md).
 #
 # STAMP PERSISTENCE (git-committed, not Actions-cached)
 # ──────────────────────────────────────────────────────
-# state/giveaway-swap-date.txt is committed to main so that both this workflow
-# and the monitor.yml fallback read the same authoritative stamp on checkout.
-# An Actions cache (rolling-key) cannot reliably share state across two
-# independent workflow triggers, and a cross-workflow cache lookup requires
-# extra tooling. The git-commit approach is identical to how
-# state/giveaway-snapshot.json is already persisted.
+# state/giveaway-swap-date.txt is committed to main so the authoritative stamp
+# survives across runs and is read on each checkout. It is kept in git rather
+# than the Actions cache because the monitor.yml cache restore proved able to
+# clobber git-tracked state (the 2026-10-13 cache-collision incident); the
+# git-commit approach is identical to how state/giveaway-snapshot.json is
+# already persisted and is unaffected by that cache.
 
 on:
   # Called by cron-job.org daily at 01:55 America/Chicago.
@@ -57,9 +57,10 @@ jobs:
 
       # ── Run the swap ────────────────────────────────────────────────────────
       # --alert-if-empty: send a Telegram warning if nothing is staged (so the
-      # operator is reminded they may have forgotten). The monitor.yml fallback
-      # does NOT pass this flag — it would otherwise send a duplicate "nothing
-      # staged" message on every fallback tick for the rest of the day.
+      # operator is reminded they may have forgotten). The flag is opt-in because
+      # the gate stays open all day on "nothing staged" — any caller that ran
+      # repeatedly would emit a duplicate warning per tick. This once-daily
+      # workflow is the only caller, so "at most one warning per day" holds.
       - name: Run giveaway value swap
         env:
           SHOPIFY_ADMIN_API_TOKEN: ${{ secrets.SHOPIFY_ADMIN_API_TOKEN }}
@@ -72,9 +73,9 @@ jobs:
       # it on a successful field promotion (not on "gate-not-open" or
       # "nothing-staged"), so most runs have nothing to commit here.
       #
-      # This workflow and monitor.yml both can commit the stamp, but git's
-      # concurrent rebase+autostash pattern (git pull --rebase --autostash +
-      # git push) ensures both converge on the latest version without conflicts.
+      # This is now the ONLY workflow that writes the stamp. The rebase+autostash
+      # pattern below is retained so this push still converges cleanly with any
+      # concurrent monitor.yml changelog commit touching the same branch.
       - name: Commit swap stamp
         if: always()
         run: |
