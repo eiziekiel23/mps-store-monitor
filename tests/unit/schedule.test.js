@@ -8,15 +8,17 @@ import {
   shouldSendHourlyStatusReport,
   resolveIsManualRun,
   shouldRunGiveawaySwap,
-  GIVEAWAY_SWAP_HOUR
+  GIVEAWAY_SWAP_HOUR,
+  GIVEAWAY_SWAP_MINUTE
 } from '../../src/schedule.js';
 
 describe('schedule: giveaway daily report', () => {
   describe('getCentralTime', () => {
-    it('returns a valid YYYY-MM-DD date string and 0-23 hour', () => {
-      const { date, hour } = getCentralTime();
+    it('returns a valid YYYY-MM-DD date string, 0-23 hour, and 0-59 minute', () => {
+      const { date, hour, minute } = getCentralTime();
       assert.match(date, /^\d{4}-\d{2}-\d{2}$/, 'date should be YYYY-MM-DD format');
       assert.ok(hour >= 0 && hour <= 23, `hour out of range: ${hour}`);
+      assert.ok(minute >= 0 && minute <= 59, `minute out of range: ${minute}`);
     });
 
     it('handles known UTC timestamp during CDT (UTC-5): 08:00 UTC = 03:00 CDT', () => {
@@ -54,6 +56,14 @@ describe('schedule: giveaway daily report', () => {
       const result = getCentralTime(new Date('2026-11-01T07:00:00Z'));
       assert.equal(result.date, '2026-11-01');
       assert.equal(result.hour, 1);
+    });
+
+    it('extracts a non-zero minute (06:55 UTC = 01:55 CDT)', () => {
+      // All fixtures above land on exact hours; this confirms minute parsing
+      // itself works, which the 01:55 swap gate now depends on.
+      const result = getCentralTime(new Date('2026-07-15T06:55:00Z'));
+      assert.equal(result.hour, 1);
+      assert.equal(result.minute, 55);
     });
   });
 
@@ -308,33 +318,51 @@ describe('schedule: giveaway daily report', () => {
   });
 
   describe('shouldRunGiveawaySwap', () => {
-    // 2026-07-15 06:00 UTC = 01:00 CDT (before GIVEAWAY_SWAP_HOUR)
+    // 2026-07-15 06:00 UTC = 01:00 CDT (well before the gate)
     const cdt1am = new Date('2026-07-15T06:00:00Z');
-    // 2026-07-15 07:00 UTC = 02:00 CDT (at GIVEAWAY_SWAP_HOUR)
+    // 2026-07-15 06:54 UTC = 01:54 CDT (one minute before the gate)
+    const cdt154am = new Date('2026-07-15T06:54:00Z');
+    // 2026-07-15 06:55 UTC = 01:55 CDT (exactly at the gate)
+    const cdt155am = new Date('2026-07-15T06:55:00Z');
+    // 2026-07-15 07:00 UTC = 02:00 CDT (after the gate)
     const cdt2am = new Date('2026-07-15T07:00:00Z');
-    // 2026-07-15 08:00 UTC = 03:00 CDT (after GIVEAWAY_SWAP_HOUR)
+    // 2026-07-15 08:00 UTC = 03:00 CDT (well after the gate)
     const cdt3am = new Date('2026-07-15T08:00:00Z');
     const cdtDate = '2026-07-15';
 
-    it('GIVEAWAY_SWAP_HOUR is 2 (02:00 Chicago)', () => {
-      assert.equal(GIVEAWAY_SWAP_HOUR, 2);
+    it('gate is 01:55 Chicago (changed from 02:00 on 2026-10-13)', () => {
+      assert.equal(GIVEAWAY_SWAP_HOUR, 1);
+      assert.equal(GIVEAWAY_SWAP_MINUTE, 55);
     });
 
-    it('returns false when hour < GIVEAWAY_SWAP_HOUR (01:00 CDT)', () => {
+    it('returns false well before the gate (01:00 CDT)', () => {
       assert.equal(
         shouldRunGiveawaySwap({ stamp: '', now: cdt1am }),
         false
       );
     });
 
-    it('returns true at GIVEAWAY_SWAP_HOUR (02:00 CDT) with empty/no prior stamp', () => {
+    it('returns false one minute before the gate (01:54 CDT)', () => {
       assert.equal(
-        shouldRunGiveawaySwap({ stamp: '', now: cdt2am }),
+        shouldRunGiveawaySwap({ stamp: '', now: cdt154am }),
+        false,
+        'the hour has already ticked over to 1, so a bare hour check would wrongly open here'
+      );
+    });
+
+    it('returns true at exactly the gate (01:55 CDT) with empty/no prior stamp', () => {
+      assert.equal(
+        shouldRunGiveawaySwap({ stamp: '', now: cdt155am }),
         true
       );
     });
 
-    it('returns true after GIVEAWAY_SWAP_HOUR with a stale stamp from yesterday', () => {
+    it('returns true after the gate (02:00 and 03:00 CDT)', () => {
+      assert.equal(shouldRunGiveawaySwap({ stamp: '', now: cdt2am }), true);
+      assert.equal(shouldRunGiveawaySwap({ stamp: '', now: cdt3am }), true);
+    });
+
+    it('returns true after the gate with a stale stamp from yesterday', () => {
       assert.equal(
         shouldRunGiveawaySwap({ stamp: '2026-07-14', now: cdt3am }),
         true,
@@ -354,19 +382,19 @@ describe('schedule: giveaway daily report', () => {
       assert.equal(
         shouldRunGiveawaySwap({ stamp: '2026-07-14', now: cdt3am }),
         true,
-        'stale stamp means the 02:00 tick was missed, 03:00 should still fire'
+        'stale stamp means the 01:55 tick was missed, 03:00 should still fire'
       );
     });
 
     it('has no isManualRun bypass — unlike the report gate, every caller respects the gate', () => {
       // The swap mutates live storefront data, so (per design) a manual
-      // workflow_dispatch does NOT skip the 02:00 Chicago gate the way
+      // workflow_dispatch does NOT skip the 01:55 Chicago gate the way
       // shouldSendDailyGiveawayReport's isManualRun does. Passing an
       // isManualRun-shaped key has no effect — the function doesn't accept one.
       assert.equal(
         shouldRunGiveawaySwap({ stamp: cdtDate, now: cdt1am, isManualRun: true }),
         false,
-        'gate stays closed before 02:00 regardless of any manual flag'
+        'gate stays closed before 01:55 regardless of any manual flag'
       );
       assert.equal(
         shouldRunGiveawaySwap({ stamp: cdtDate, now: cdt3am, isManualRun: true }),
@@ -375,13 +403,19 @@ describe('schedule: giveaway daily report', () => {
       );
     });
 
-    it('DST: 02:00 CST (winter) gates the same as 02:00 CDT (summer)', () => {
-      // 2026-01-15 08:00 UTC = 02:00 CST (UTC-6, no DST)
-      const cst2am = new Date('2026-01-15T08:00:00Z');
+    it('DST: 01:55 CST (winter) gates the same as 01:55 CDT (summer)', () => {
+      // 2026-01-15 07:55 UTC = 01:55 CST (UTC-6, no DST)
+      const cst155am = new Date('2026-01-15T07:55:00Z');
       assert.equal(
-        shouldRunGiveawaySwap({ stamp: '', now: cst2am }),
+        shouldRunGiveawaySwap({ stamp: '', now: cst155am }),
         true,
-        'gate should open at 02:00 local time regardless of DST offset'
+        'gate should open at 01:55 local time regardless of DST offset'
+      );
+      // And one minute before should still be closed in winter too.
+      const cst154am = new Date('2026-01-15T07:54:00Z');
+      assert.equal(
+        shouldRunGiveawaySwap({ stamp: '', now: cst154am }),
+        false
       );
     });
   });

@@ -1,7 +1,7 @@
 # STATE.md — MPS Store Monitor — Chunked Work State
 
 **Repo:** `/mnt/d/mps-store-monitor` (public GitHub repo)  
-**Last updated:** 2026-10-13 (**behavior change at user request**: `flash_giveaway_start_date` no longer swapped (8→7 fields) and staging values are now **retained** after promotion, not cleared; 135/135 unit tests)  
+**Last updated:** 2026-10-13 (**schedule change at user request**: giveaway swap gate 02:00 → **01:55** America/Chicago, and `monitor.yml` cron every-15-min → **every 8 hours / 3× per day**; 138/138 unit tests)  
 **Chunked workflow:** 5-7 steps per chunk, update after every step, checkpoint + approval between chunks.
 
 ---
@@ -256,6 +256,33 @@
   docstrings rewritten), `tests/unit/giveaway-swap.test.js` (2 tests updated — regression guard now asserts
   3 requests and that no mutation targets the staging GID), `CHANGELOG-giveaways.md` (7 fields, retention note).
   `replaceMetaobjectValues()` remains exported from `src/admin.js` as a general helper, now unused by the swap.
+- **Decision (user, 2026-10-13) — two schedule changes:**
+  (1) **Giveaway swap gate moved 02:00 → 01:55 America/Chicago.** Required adding **minute** resolution to
+  `getCentralTime()` (it previously returned only `{date, hour}`) and switching `shouldRunGiveawaySwap` from
+  `hour < GIVEAWAY_SWAP_HOUR` to a **minutes-since-midnight** comparison
+  (`hour*60 + minute < GIVEAWAY_SWAP_MINUTE_OF_DAY`, 115). New exports: `GIVEAWAY_SWAP_HOUR = 1`,
+  `GIVEAWAY_SWAP_MINUTE = 55`, `GIVEAWAY_SWAP_MINUTE_OF_DAY`. **A naive `hour >= 1 && minute >= 55` was explicitly
+  rejected** — it re-closes the gate from 02:00 to 02:54, which would break the all-day self-healing property the
+  whole design depends on. No rationale for 01:55 was recorded by the operator; the observable benefit is that
+  `flash_giveaway_end_date` values are themselves stamped `"<date> 02:00:00"`, so promoting 5 minutes early avoids
+  a render window where the theme shows an expired timer.
+  (2) **`monitor.yml` cron `7,22,37,52 * * * *` → `7 0,8,16 * * *`** (every 15 min → 3×/day, 8h apart). Keeps the
+  `:07` offset from the 2026-10-10 anti-congestion decision. Ticks land 00:07 / 08:07 / 16:07 UTC — **08:07 UTC is
+  the first tick after the 01:55 Chicago gate in BOTH DST states** (gate = 06:55 UTC in CDT, 07:55 UTC in CST), so
+  fallback coverage of a missed dedicated swap is preserved. **Trade-off accepted:** the self-healing fallback now
+  catches a missed swap within ≤8 hours instead of ≤15 minutes, and incident alerts likewise surface up to 8 hours
+  later (they were deliberately ungated to fire every 15-min tick — that resolution is now gone). The
+  `shouldSendHourlyStatusReport` UTC-hour gate becomes a no-op safety net (no two ticks share a UTC hour) and is
+  retained only as a double-guard. **`monitor.yml` is driven ONLY by native GitHub cron** (verified — no
+  cron-job.org job targets it), so this one-line change is the complete cadence change.
+  Files: `src/schedule.js`, `src/giveaway/swap.js` (docstrings only — no logic change),
+  `.github/workflows/monitor.yml`, `.github/workflows/giveaway-swap.yml` (comments only),
+  `tests/unit/schedule.test.js` (+3 tests: non-zero-minute extraction, 01:54 boundary, CST 01:54/01:55),
+  `tests/unit/giveaway-swap.test.js` (comments + 1 test renamed; fixtures 01:00/03:00 already straddle 01:55).
+  **⚠️ Requires a matching change OUTSIDE this repo:** cron-job.org job `8622147` schedule
+  `hours=[2], minutes=[0]` → `hours=[1], minutes=[55]`. Until that is done the dedicated workflow still fires at
+  02:00 Central — harmless (the gate is already open by then, so it swaps normally) but 5 minutes later than
+  intended, and it is the caller that sends the "nothing staged" reminder.
 - **Local dev only:** Chromium cannot launch in WSL2 without `export LD_LIBRARY_PATH=/home/eiziekiel23/.claude/jobs/721a0389/tmp/pwlibs/root/usr/lib/x86_64-linux-gnu` (14 `.so` files extracted in the Chunk 1 spike; `playwright install --with-deps` needs sudo, unavailable). CI is unaffected.
 
 ---
@@ -307,14 +334,17 @@
 
 **Chunk 11.3 is 🟡 awaiting review** (pushed `f0e85ed`). All steps complete (Step 6 created 2026-10-11 01:12 CDT).
 
-**Tonight's automatic live full-cycle run — no action needed.** `monitor.yml` already runs on GitHub's native
-15-minute schedule (`7,22,37,52 * * * *`) and calls `node src/giveaway/swap.js` as the self-healing fallback. The
-first tick after **02:00 America/Chicago** will find the gate open, promote the operator's staged values into the
-live entry, write the stamp, and send a Telegram success alert. This is a genuine full-cycle run on real data and
-does **not** depend on cron-job.org. **What to check the next morning:** (1) a Telegram swap-success alert
-arrived; (2) the live giveaway shows the newly staged values; (3) **the staging entry still holds those same
+**Tonight's automatic live full-cycle run — no action needed.** Two independent callers can perform the swap:
+the dedicated `giveaway-swap.yml` (dispatched by cron-job.org job `8622147`) and `monitor.yml`'s self-healing
+fallback step, now on GitHub's native **3×/day** schedule (`7 0,8,16 * * *` → 00:07 / 08:07 / 16:07 UTC). The
+first caller at/after **01:55 America/Chicago** will find the gate open, promote the operator's staged values into
+the live entry, write the stamp, and send a Telegram success alert; the 08:07 UTC monitor tick is the first
+fallback tick after the gate in both DST states. **What to check the next morning:** (1) a Telegram swap-success
+alert arrived; (2) the live giveaway shows the newly staged values; (3) **the staging entry still holds those same
 values** (retention, changed 2026-10-13 — an empty staging entry would now be a bug); (4)
-`state/giveaway-swap-date.txt` was bot-committed with that day's Central date.
+`state/giveaway-swap-date.txt` was bot-committed with that day's Central date; (5) **exactly 3 scheduled
+`monitor.yml` runs appear in the Actions history for the day** (confirms the new cron is being honored — GitHub
+drops ticks, and at 3×/day a dropped tick is proportionally far more costly than it was at 96×/day).
 
 **⚠️ Verification still outstanding.** The overnight runs of 2026-10-12 and 2026-10-13 were never reported back,
 so Chunk 11.3's live full-cycle confirmation remains unverified. Worth checking the actual GitHub Actions run

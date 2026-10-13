@@ -30,13 +30,18 @@
 export const DAILY_REPORT_HOUR = 3;
 
 /**
- * Return the current date and hour in America/Chicago.
+ * Return the current date, hour and minute in America/Chicago.
  *
  * DST-aware: during CDT (UTC−5) 08:00 UTC → 03:00 local; during CST (UTC−6)
  * 09:00 UTC → 03:00 local. Intl resolves the offset from the IANA database.
  *
+ * `minute` exists because not every gate lands on an hour boundary — the
+ * giveaway swap fires at 01:55 Central (see GIVEAWAY_SWAP_HOUR/MINUTE), which
+ * an hour-only comparison cannot express.
+ *
  * @param {Date} [now] - injectable for unit tests
- * @returns {{ date: string, hour: number }} YYYY-MM-DD in Central and 0-23 hour
+ * @returns {{ date: string, hour: number, minute: number }} YYYY-MM-DD in Central,
+ *          0-23 hour and 0-59 minute
  */
 export function getCentralTime(now = new Date()) {
   const fmt = new Intl.DateTimeFormat('en-US', {
@@ -45,6 +50,7 @@ export function getCentralTime(now = new Date()) {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
+    minute: '2-digit',
     hourCycle: 'h23',
   });
   const parts = Object.fromEntries(
@@ -55,6 +61,7 @@ export function getCentralTime(now = new Date()) {
   return {
     date: `${parts.year}-${parts.month}-${parts.day}`,
     hour: parseInt(parts.hour, 10),
+    minute: parseInt(parts.minute, 10),
   };
 }
 
@@ -82,14 +89,36 @@ export function shouldSendDailyGiveawayReport({ isManualRun, stamp, now }) {
   return stamp !== date;
 }
 
-/** America/Chicago hour at-or-after which the daily giveaway swap may fire. */
-export const GIVEAWAY_SWAP_HOUR = 2;
+/**
+ * America/Chicago wall-clock time at-or-after which the daily giveaway swap may
+ * fire: 01:55 (changed from 02:00 on 2026-10-13 at operator request).
+ *
+ * 01:55 was requested by the operator; no rationale was recorded. Worth noting
+ * what it buys regardless: flash_giveaway_end_date values are themselves stamped
+ * "<date> 02:00:00", so a swap firing exactly at 02:00 raced the countdown it was
+ * replacing and the theme could render a moment of expired-timer state before the
+ * new values landed. Promoting five minutes early closes that window.
+ */
+export const GIVEAWAY_SWAP_HOUR = 1;
+export const GIVEAWAY_SWAP_MINUTE = 55;
+
+/** GIVEAWAY_SWAP_HOUR/MINUTE as minutes-since-Central-midnight (115 = 01:55). */
+export const GIVEAWAY_SWAP_MINUTE_OF_DAY =
+  GIVEAWAY_SWAP_HOUR * 60 + GIVEAWAY_SWAP_MINUTE;
 
 /**
  * Decide whether the daily giveaway value-swap should run now.
  *
- * Returns true when the current hour in America/Chicago is ≥ GIVEAWAY_SWAP_HOUR
- * AND `stamp` does not already match today's Central date (one swap per day).
+ * Returns true when the current America/Chicago wall-clock time is ≥ 01:55 AND
+ * `stamp` does not already match today's Central date (one swap per day).
+ *
+ * WHY MINUTES-SINCE-MIDNIGHT AND NOT (hour, minute) COMPARISONS
+ * -------------------------------------------------------------
+ * The gate time is no longer on an hour boundary, so `hour < 1` alone is wrong
+ * (it would open the gate at 01:00) and a naive `hour >= 1 && minute >= 55`
+ * is worse — it would close again at 02:00 through 02:54, breaking the
+ * self-healing property below. Collapsing both fields into a single monotonic
+ * minute-of-day integer makes the comparison a plain `>=` with no edge cases.
  *
  * WHY NO isManualRun BYPASS (unlike shouldSendDailyGiveawayReport)
  * ----------------------------------------------------------------
@@ -98,13 +127,17 @@ export const GIVEAWAY_SWAP_HOUR = 2;
  * promoting the staged upcoming values into the customer-facing fields. Firing
  * it early (an operator clicking "Run workflow" at noon) would leak tomorrow's
  * giveaway hours before its start. By design every caller — native cron, the
- * external scheduler, and a human dispatch alike — is held to the 2 AM Central
- * gate. 2 AM Central is 3 PM Manila and auto-adjusts for DST via getCentralTime.
+ * external scheduler, and a human dispatch alike — is held to the 01:55 Central
+ * gate. 01:55 Central is 2:55 PM Manila during CDT and 3:55 PM during CST; the
+ * DST adjustment is handled by getCentralTime, not by arithmetic here.
  *
- * The date-stamp (not `hour === 2`) keeps it idempotent and self-healing: the
- * hourly external scheduler's first tick at/after 02:00 Central swaps, the rest
- * of the day's ticks find a matching stamp and no-op; a missed 02:00 tick is
- * recovered by the 03:00 tick because the stamp is still yesterday's date.
+ * The date-stamp (not `hour === 1 && minute === 55`) keeps it idempotent and
+ * self-healing: the external scheduler's first tick at/after 01:55 Central
+ * swaps, every later tick that day finds a matching stamp and no-ops; a missed
+ * 01:55 tick is recovered by any later tick because the stamp is still
+ * yesterday's date. This matters more now that the monitor.yml fallback runs
+ * only 3x/day (see .github/workflows/monitor.yml) — the gate staying open all
+ * day is what makes a sparse fallback schedule sufficient.
  *
  * Pure (no I/O) — the caller reads the stamp from disk and writes it back only
  * after a swap actually completes.
@@ -115,8 +148,8 @@ export const GIVEAWAY_SWAP_HOUR = 2;
  * @returns {boolean}
  */
 export function shouldRunGiveawaySwap({ stamp, now }) {
-  const { date, hour } = getCentralTime(now);
-  if (hour < GIVEAWAY_SWAP_HOUR) return false;
+  const { date, hour, minute } = getCentralTime(now);
+  if (hour * 60 + minute < GIVEAWAY_SWAP_MINUTE_OF_DAY) return false;
   return stamp !== date;
 }
 
@@ -146,11 +179,11 @@ export function getHourStamp(now = new Date()) {
 /**
  * Decide whether the full status digest should dispatch on this run.
  *
- * The workflow fires every 15 minutes (see .github/workflows/monitor.yml) so a
- * dropped GitHub cron tick cannot cost us an hour of coverage. The operator
- * still wants an *hourly* report, not four per hour, so the digest is gated on
- * a UTC-hour stamp: the first run to land in a given hour sends it, the other
- * three log and skip.
+ * The workflow fires 3× per day (~every 8 hours; see .github/workflows/monitor.yml).
+ * The UTC-hour gate is technically satisfied on every tick at that cadence
+ * (no two fires share a UTC hour), but it remains in place as a double-guard:
+ * should the cadence ever be tightened again, or a manual re-run land close to
+ * a scheduled tick, the gate prevents a duplicate digest within the same hour.
  *
  * This is self-healing in the same way the daily gate is — if the :07 run is
  * dropped, the :22 run finds an unmatched stamp and sends the digest instead.

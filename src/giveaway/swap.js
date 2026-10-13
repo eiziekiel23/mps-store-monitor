@@ -2,10 +2,13 @@
  * Daily giveaway value swap: promotes the operator-staged "upcoming_flash_giveaway"
  * fields into the live "giveaway" entry. The staging entry is left intact.
  *
- * Fires once per day at/after 02:00 America/Chicago, auto-adjusting for DST.
- * Idempotent: every 15-minute cron tick from 02:00 onward applies the same
- * timestamp-stamped gate; the first tick to find an open gate swaps, the rest
- * of the day log and skip.
+ * Fires once per day at/after 01:55 America/Chicago, auto-adjusting for DST
+ * (changed from 02:00 on 2026-10-13; gate is enforced in src/schedule.js).
+ * Idempotent: every monitor tick at/after 01:55 applies the same timestamp-stamped
+ * gate; the first tick to find an open gate swaps, the rest of the day log and skip.
+ * The gate stays open all day (gate is "date did not yet match today's swap" not
+ * "hour is exactly 01:55"), so a self-healing fallback is effective even if run
+ * fewer than hourly — presently 3× per day via monitor.yml's native cron.
  *
  * WHY SEPARATE METAOBJECTS (UPCOMING vs. LIVE)
  * ───────────────────────────────────────────
@@ -17,7 +20,7 @@
  *
  * STAGING IS A PERSISTENT TEMPLATE (changed 2026-10-13)
  * ─────────────────────────────────────────────────────
- * The operator populates the upcoming_flash_giveaway entry before 02:00 Chicago
+ * The operator populates the upcoming_flash_giveaway entry before 01:55 Chicago
  * on the day the giveaway should change. The swap promotes ALL non-empty fields
  * from upcoming into live (a sparse/partial write — admin.js:updateMetaobjectFields,
  * using MetaobjectUpdateInput.fields) and then STOPS. The staging entry keeps its
@@ -46,10 +49,10 @@
  * field type (confirmed via live schema introspection, 2026-10-11). That mattered for
  * the old clearing step and is kept here as a warning for anyone reintroducing one.
  *
- * If the operator forgets to stage before 02:00 but populates later that day
- * (e.g., 05:00), the next tick at 06:00+ will still find the gate open and perform
+ * If the operator forgets to stage before 01:55 but populates later that day
+ * (e.g., 05:00), the next fallback tick will still find the gate open and perform
  * the swap — self-healing against missed morning runs. But the giveaway won't rotate
- * until the next day if they miss 02:00 entirely.
+ * until the next day if they miss staging for the whole day.
  *
  * Usage (CLI):
  *   node src/giveaway/swap.js [--dry-run] [--alert-if-empty]
@@ -57,16 +60,18 @@
  * WHY --alert-if-empty IS OPT-IN
  * ──────────────────────────────
  * The gate deliberately stays open all day (see self-healing note above) because
- * the stamp is only written on a successful swap. If staging is empty, a caller
- * running every 15 minutes would therefore find `gate open + nothing staged` on
- * EVERY tick from 02:00 to midnight — ~88 identical "you forgot to stage" Telegram
- * messages a day.
+ * the stamp is only written on a successful swap. If staging is empty, every
+ * fallback tick for the rest of the day therefore finds `gate open + nothing
+ * staged` and would emit its own "you forgot to stage" Telegram message. That was
+ * ~88 duplicates a day when monitor.yml ran every 15 minutes; at the current
+ * 3×/day cadence it is only a couple — but the duplication is a property of the
+ * gate, not of the cadence, so the fix stays cadence-independent.
  *
- * So the warning is opt-in, and only the dedicated once-daily 02:00 workflow
+ * So the warning is opt-in, and only the dedicated once-daily 01:55 workflow
  * passes the flag. That makes "at most one warning per day" a structural
  * property of the caller rather than something this module has to track with
- * a second stamp file. The high-frequency fallback caller in monitor.yml runs
- * without the flag: it stays silent unless it actually swaps something.
+ * a second stamp file. The fallback caller in monitor.yml runs without the flag:
+ * it stays silent unless it actually swaps something.
  *
  * Since staging values are now retained (see above), an empty staging entry is no
  * longer the normal daytime state — it means the entry was never populated or was
@@ -160,7 +165,7 @@ export async function runGiveawaySwap({
 }) {
   const { date } = getCentralTime(now);
 
-  // Check the daily gate: are we at/after 02:00 Chicago today, and has this gate fired yet today?
+  // Check the daily gate: are we at/after 01:55 Chicago today, and has this gate fired yet today?
   if (!shouldRunGiveawaySwap({ stamp, now })) {
     return { ran: false, reason: 'gate-not-open', swapped: [] };
   }
@@ -251,7 +256,7 @@ function writeStamp(filePath, value) {
 async function main() {
   const dryRun = process.argv.includes('--dry-run');
   // See module-level docstring: "nothing staged" alerts are opt-in so the
-  // high-frequency monitor.yml fallback doesn't spam one per 15-minute tick.
+  // monitor.yml fallback doesn't emit one per tick for the rest of the day.
   const alertIfEmpty = process.argv.includes('--alert-if-empty');
   const token = process.env.SHOPIFY_ADMIN_API_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;

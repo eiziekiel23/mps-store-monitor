@@ -19,10 +19,13 @@ describe('giveaway/swap.js - runGiveawaySwap', () => {
   }
 
   // Helper: time of day in Central time (2026-07-15 08:00 UTC = 03:00 CDT).
+  // Both fixtures straddle the 01:55 gate (changed from 02:00 on 2026-10-13):
+  // cdt1am (01:00) is before it, cdt3am (03:00) is well after it. Minute-level
+  // boundary cases (01:54/01:55) are covered in tests/unit/schedule.test.js.
   const cdt3am = new Date('2026-07-15T08:00:00Z');
   const cdt1am = new Date('2026-07-15T06:00:00Z');
 
-  test('gate-not-open when hour < 02:00 Chicago', async () => {
+  test('gate-not-open when before 01:55 Chicago', async () => {
     const fetcher = makeFetcher([]);
     const result = await runGiveawaySwap({
       shop: 'test.myshopify.com',

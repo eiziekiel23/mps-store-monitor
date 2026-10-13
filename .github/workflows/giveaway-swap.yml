@@ -3,11 +3,11 @@ name: Giveaway Daily Swap
 # WHY TWO TRIGGER TYPES
 # ─────────────────────
 # - schedule (cron-job.org external dispatcher via workflow_dispatch) fires daily
-#   at 02:00 America/Chicago, DST-adjusted by cron-job.org.
+#   at 01:55 America/Chicago, DST-adjusted by cron-job.org.
 # - workflow_dispatch (manual) lets the operator trigger a run at any time
 #   (e.g., to force-test the pipeline after staging values).
 #
-# The 02:00 gate is enforced by shouldRunGiveawaySwap() in src/schedule.js,
+# The 01:55 gate is enforced by shouldRunGiveawaySwap() in src/schedule.js,
 # not by this workflow's cron expression. The dedicated swap workflow is the
 # only caller that passes --alert-if-empty; the monitor.yml fallback does not.
 #
@@ -21,7 +21,7 @@ name: Giveaway Daily Swap
 # state/giveaway-snapshot.json is already persisted.
 
 on:
-  # Called by cron-job.org daily at 02:00 America/Chicago.
+  # Called by cron-job.org daily at 01:55 America/Chicago.
   # The external scheduler must pass trigger: "scheduled" to engage the
   # src/schedule.js gate (same convention as monitor.yml).
   workflow_dispatch:
@@ -58,8 +58,8 @@ jobs:
       # ── Run the swap ────────────────────────────────────────────────────────
       # --alert-if-empty: send a Telegram warning if nothing is staged (so the
       # operator is reminded they may have forgotten). The monitor.yml fallback
-      # does NOT pass this flag — it runs every 15 minutes and would otherwise
-      # send ~88 "nothing staged" messages per day.
+      # does NOT pass this flag — it would otherwise send a duplicate "nothing
+      # staged" message on every fallback tick for the rest of the day.
       - name: Run giveaway value swap
         env:
           SHOPIFY_ADMIN_API_TOKEN: ${{ secrets.SHOPIFY_ADMIN_API_TOKEN }}
