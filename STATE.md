@@ -273,16 +273,24 @@
   catches a missed swap within ≤8 hours instead of ≤15 minutes, and incident alerts likewise surface up to 8 hours
   later (they were deliberately ungated to fire every 15-min tick — that resolution is now gone). The
   `shouldSendHourlyStatusReport` UTC-hour gate becomes a no-op safety net (no two ticks share a UTC hour) and is
-  retained only as a double-guard. **`monitor.yml` is driven ONLY by native GitHub cron** (verified — no
-  cron-job.org job targets it), so this one-line change is the complete cadence change.
+  retained only as a double-guard.
+  **CORRECTION (2026-10-13, same day):** the earlier note here — "`monitor.yml` is driven ONLY by native GitHub
+  cron (verified — no cron-job.org job targets it)" — was **wrong**. cron-job.org job `8616859`
+  ("MPS Store Monitor - External Scheduler") dispatches `monitor.yml` via `workflow_dispatch` and was set to
+  `hours=[-1]` (cron-job.org's "every hour") at `minutes=[7]` UTC — i.e. 24×/day, silently overriding the native
+  cron's intended 3×/day cadence. **Both schedulers are now fixed:**
+  - `8622147` (giveaway swap): `hours=[2],minutes=[0]` → `hours=[1],minutes=[55]` America/Chicago — ✅ **DONE and
+    verified by read-back.**
+  - `8616859` (monitor dispatch): `hours=[-1],minutes=[7]` → `hours=[0,8,16],minutes=[7]` UTC — ✅ **DONE and
+    verified by read-back**, now matching the native cron exactly (both fire at 00:07/08:07/16:07 UTC — redundant
+    but harmless; GitHub de-dupes concurrent identical-ref dispatches gracefully, each just runs as its own job).
+  Scripts used: `tmp/update-cronjob-schedule.mjs` (job 8622147) and an inline PATCH (job 8616859), both in
+  `/home/eiziekiel23/.claude/jobs/721a0389/tmp/`, using a `chmod 600` env file for `CRONJOB_API_KEY` deleted
+  immediately after use.
   Files: `src/schedule.js`, `src/giveaway/swap.js` (docstrings only — no logic change),
   `.github/workflows/monitor.yml`, `.github/workflows/giveaway-swap.yml` (comments only),
   `tests/unit/schedule.test.js` (+3 tests: non-zero-minute extraction, 01:54 boundary, CST 01:54/01:55),
   `tests/unit/giveaway-swap.test.js` (comments + 1 test renamed; fixtures 01:00/03:00 already straddle 01:55).
-  **⚠️ Requires a matching change OUTSIDE this repo:** cron-job.org job `8622147` schedule
-  `hours=[2], minutes=[0]` → `hours=[1], minutes=[55]`. Until that is done the dedicated workflow still fires at
-  02:00 Central — harmless (the gate is already open by then, so it swaps normally) but 5 minutes later than
-  intended, and it is the caller that sends the "nothing staged" reminder.
 - **Local dev only:** Chromium cannot launch in WSL2 without `export LD_LIBRARY_PATH=/home/eiziekiel23/.claude/jobs/721a0389/tmp/pwlibs/root/usr/lib/x86_64-linux-gnu` (14 `.so` files extracted in the Chunk 1 spike; `playwright install --with-deps` needs sudo, unavailable). CI is unaffected.
 
 ---
