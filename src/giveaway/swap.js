@@ -1,6 +1,6 @@
 /**
  * Daily giveaway value swap: promotes the operator-staged "upcoming_flash_giveaway"
- * fields into the live "giveaway" entry, then clears the staging entry.
+ * fields into the live "giveaway" entry. The staging entry is left intact.
  *
  * Fires once per day at/after 02:00 America/Chicago, auto-adjusting for DST.
  * Idempotent: every 15-minute cron tick from 02:00 onward applies the same
@@ -15,41 +15,51 @@
  * start time. By staging in a *separate* type and swapping on schedule, the live
  * entry is atomic: it either is yesterday's giveaway or today's, never both.
  *
- * STAGING AND CLEARING PATTERN
- * ────────────────────────────
+ * STAGING IS A PERSISTENT TEMPLATE (changed 2026-10-13)
+ * ─────────────────────────────────────────────────────
  * The operator populates the upcoming_flash_giveaway entry before 02:00 Chicago
  * on the day the giveaway should change. The swap promotes ALL non-empty fields
  * from upcoming into live (a sparse/partial write — admin.js:updateMetaobjectFields,
- * using MetaobjectUpdateInput.fields), then wipes the ENTIRE staging entry (a full
- * replacement — admin.js:replaceMetaobjectValues, using the mutually exclusive
- * MetaobjectUpdateInput.values: {} — omitted keys are cleared). Clearing prevents a
- * forgotten manual update from re-promoting stale values again tomorrow. Subsequent
- * cron ticks that same day find nothing staged → nothing swapped → no redundant
- * Telegram alerts.
+ * using MetaobjectUpdateInput.fields) and then STOPS. The staging entry keeps its
+ * values.
  *
- * Full replacement is only safe here because the staging entry holds EXACTLY the 8
- * daily swap fields and nothing else (verified live 2026-10-11) — a full replacement
- * of the 27-field LIVE entry would wipe its 19 monthly fields, which is why the
- * promote step above uses the sparse `fields` write instead. `value: null` on
- * `fields` was tried first and does NOT work: MetaobjectFieldInput.value is String!
- * (non-null) in Shopify's schema, so GraphQL rejects it at variable-validation time
- * for every field type — confirmed via live schema introspection, 2026-10-11.
+ * Earlier versions wiped staging after each promote (a full replacement with
+ * MetaobjectUpdateInput.values: {}) so that a forgotten manual update could not
+ * re-promote stale values. That was reversed by operator request: an empty admin
+ * form every morning is worse ergonomics than a pre-filled one. The retained values
+ * act as an editable template — the operator opens the same entry, tweaks what
+ * changed, and leaves the rest.
+ *
+ * What retention actually costs: the daily stamp gate still allows exactly one swap
+ * per Central day, so the retained values are re-promoted each morning. After the
+ * first promote the live entry already holds them, making every later promote an
+ * idempotent no-op in terms of visible store data. The REAL consequence is that
+ * nothing self-advances: flash_giveaway_end_date will keep being re-promoted at its
+ * staged value, so if the operator does not edit staging the countdown freezes on a
+ * past date rather than rotating. Daily staging edits remain mandatory.
+ *
+ * Note the surviving asymmetry: the live entry carries 27 fields (7 daily + 19
+ * monthly + handle), so the promote MUST use the sparse `fields` write — a full
+ * `values` replacement there would wipe the monthly fields. Also, `value: null` on
+ * `fields` does not work as a clear: MetaobjectFieldInput.value is String! (non-null)
+ * in Shopify's schema, so GraphQL rejects it at variable-validation time for every
+ * field type (confirmed via live schema introspection, 2026-10-11). That mattered for
+ * the old clearing step and is kept here as a warning for anyone reintroducing one.
  *
  * If the operator forgets to stage before 02:00 but populates later that day
- * (e.g., 05:00), the next hourly tick at 06:00+ will still find the gate open
- * and perform the swap — self-healing against missed morning runs. But the
- * giveaway won't rotate until the next day if they miss 02:00 entirely.
+ * (e.g., 05:00), the next tick at 06:00+ will still find the gate open and perform
+ * the swap — self-healing against missed morning runs. But the giveaway won't rotate
+ * until the next day if they miss 02:00 entirely.
  *
  * Usage (CLI):
  *   node src/giveaway/swap.js [--dry-run] [--alert-if-empty]
  *
  * WHY --alert-if-empty IS OPT-IN
  * ──────────────────────────────
- * "Nothing staged" is the NORMAL state for most of the day, and the gate
- * deliberately stays open all day (see self-healing note above) because the
- * stamp is only written on a successful swap. That combination means a caller
- * running every 15 minutes would find `gate open + nothing staged` on EVERY
- * tick from 02:00 to midnight — ~88 identical "you forgot to stage" Telegram
+ * The gate deliberately stays open all day (see self-healing note above) because
+ * the stamp is only written on a successful swap. If staging is empty, a caller
+ * running every 15 minutes would therefore find `gate open + nothing staged` on
+ * EVERY tick from 02:00 to midnight — ~88 identical "you forgot to stage" Telegram
  * messages a day.
  *
  * So the warning is opt-in, and only the dedicated once-daily 02:00 workflow
@@ -57,6 +67,11 @@
  * property of the caller rather than something this module has to track with
  * a second stamp file. The high-frequency fallback caller in monitor.yml runs
  * without the flag: it stays silent unless it actually swaps something.
+ *
+ * Since staging values are now retained (see above), an empty staging entry is no
+ * longer the normal daytime state — it means the entry was never populated or was
+ * manually wiped. The flag is kept anyway: it costs nothing and still bounds the
+ * blast radius if that ever happens.
  *
  * Env:
  *   SHOPIFY_ADMIN_API_TOKEN — required for Admin API mutations.
@@ -80,7 +95,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import config from '../../config/monitor.config.js';
 import { getCentralTime, shouldRunGiveawaySwap } from '../schedule.js';
-import { fetchMetaobjectByHandle, updateMetaobjectFields, replaceMetaobjectValues } from '../admin.js';
+import { fetchMetaobjectByHandle, updateMetaobjectFields } from '../admin.js';
 import { formatSwapMessage, sendTelegram } from '../alerting/telegram.js';
 
 // Metaobject types and handles
@@ -93,8 +108,12 @@ const LIVE_HANDLE = 'mps-giveaway';
 // This is separate from config.giveaway.rotationFields (which is used by check.js
 // to detect "did a meaningful rotation happen" via field-change detection).
 // The swap's field list is all fields the operator maintains for daily giveaways.
+//
+// NOTE: flash_giveaway_start_date was removed from this list on 2026-10-13 — the
+// operator no longer auto-rotates the start date, so the swap leaves whatever is
+// already on the live entry untouched. The field may still exist on both metaobject
+// definitions; it is simply not promoted.
 const DAILY_SWAP_FIELDS = [
-  'flash_giveaway_start_date',
   'flash_giveaway_end_date',
   'flash_giveaway_timer_copy',
   'flash_giveaway_desktop_banner',
@@ -109,7 +128,8 @@ const SWAP_STAMP_PATH = path.resolve('state/giveaway-swap-date.txt');
 // ── Pure logic ────────────────────────────────────────────────────────────────
 
 /**
- * Core swap logic: fetch upcoming/live entries, promote staged fields, clear source.
+ * Core swap logic: fetch upcoming/live entries, promote staged fields onto live.
+ * The staging (upcoming) entry is read-only here — its values are retained.
  *
  * Returns an object describing what happened, suitable for logging, Telegram, or tests.
  * Throws on API/network errors (not idempotent — a retry with same args may redo the swap).
@@ -197,20 +217,10 @@ export async function runGiveawaySwap({
     fetcher
   });
 
-  // Clear the staging entry entirely (a full replacement with values: {}).
-  // This is safe here because the staging entry contains ONLY the 8 daily swap
-  // fields. A full replacement prevents a forgotten manual update from re-promoting
-  // stale values again tomorrow. See the module docstring for why not to use
-  // value: null on fields (it violates the GraphQL schema: MetaobjectFieldInput.value
-  // is String!, not String).
-  await replaceMetaobjectValues({
-    shop,
-    token,
-    id: upcoming.id,
-    values: {},
-    version,
-    fetcher
-  });
+  // The staging entry is deliberately LEFT INTACT (changed 2026-10-13).
+  // It is a persistent template, not a one-shot queue: the operator edits it in the
+  // Shopify admin and the same values re-promote (idempotently) each day until they
+  // change them. See the module docstring, "STAGING IS A PERSISTENT TEMPLATE".
 
   return {
     ran: true,

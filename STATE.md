@@ -1,7 +1,7 @@
 # STATE.md — MPS Store Monitor — Chunked Work State
 
 **Repo:** `/mnt/d/mps-store-monitor` (public GitHub repo)  
-**Last updated:** 2026-10-11 (Chunk 11.3 — clearing bug fixed + live-verified; **cron-job.org job created (jobId=8622147)**; pushed to main; awaiting tonight's live full-cycle run + review)  
+**Last updated:** 2026-10-13 (**behavior change at user request**: `flash_giveaway_start_date` no longer swapped (8→7 fields) and staging values are now **retained** after promotion, not cleared; 135/135 unit tests)  
 **Chunked workflow:** 5-7 steps per chunk, update after every step, checkpoint + approval between chunks.
 
 ---
@@ -238,6 +238,24 @@
 - **Decision (user, 2026-10-10):** hourly (cron) runs now send a FULL status digest every run ("Hourly Status Report") — not alert-only. Incident alerts still fire on state changes (NEW/STILL/RECOVERED); the giveaway rotation report is daily-gated and kept as a separate message. Manual (`workflow_dispatch`) runs send the digest as "Manual Run Report". (This reverses the earlier alert-only-on-cron no-spam decision at the user's explicit request.)
 - **Decision (user, 2026-10-10):** GitHub cron confirmed dropped — public Actions API shows only 3 scheduled runs across 2+ days (`0 * * * *` is the most congested GitHub cron minute). User chose option 2 (most aggressive): cron changed to `7,22,37,52 * * * *` (every 15 min, offset to dodge congested :00/:30). Status digest gated to once per UTC clock hour via `state/hourly-status-report-hour.txt` stamp so operator still gets one Hourly Status Report/hour, not four. Incident alerts NOT gated — they fire every 15-min tick so a real failure surfaces within 15 min. Cart rate-limit watch-point: `cart.add_pdp` / `cart.entries` now hit `/cart/add.js` 4× as often; if they flap, move to a separate hourly-only cron.
 - Giveaway snapshot + changelog committed to repo (not cached); incident state cached (not committed)
+- **Decision (user, 2026-10-13) — two changes to the daily swap, reversing earlier design:**
+  (1) **`flash_giveaway_start_date` removed from `DAILY_SWAP_FIELDS`** (8 → 7 fields) — the operator no longer
+  auto-rotates the start date, so the swap leaves whatever is on the live entry untouched. The field still exists
+  on both metaobject definitions; it is simply not promoted. (The definitions were NOT altered — removing a field
+  from a live metaobject definition is destructive and was not requested.)
+  (2) **Staging values are now RETAINED after a swap** — the `replaceMetaobjectValues({ values: {} })` clear step
+  was deleted from `runGiveawaySwap()`. This reverses the Chunk 11.2/11.3 design (and the bug-fix work that made
+  clearing schema-valid): staging is now a **persistent template** the operator edits in the Shopify admin, not a
+  one-shot queue that empties itself. Rationale (user): a pre-filled form every morning beats an empty one.
+  **Consequence to watch:** the daily stamp gate still permits one swap per Central day, so the retained values
+  re-promote each morning — idempotent in terms of visible store data (live already holds them after day 1), but
+  **nothing self-advances**. `flash_giveaway_end_date` keeps being re-promoted at its staged value, so if the
+  operator does not edit staging the countdown freezes on a past date instead of rotating. **Daily staging edits
+  are mandatory.** Also note the swap now performs only ONE mutation (promote), down from two.
+  Files: `src/giveaway/swap.js` (field list, clear step removed, `replaceMetaobjectValues` import dropped,
+  docstrings rewritten), `tests/unit/giveaway-swap.test.js` (2 tests updated — regression guard now asserts
+  3 requests and that no mutation targets the staging GID), `CHANGELOG-giveaways.md` (7 fields, retention note).
+  `replaceMetaobjectValues()` remains exported from `src/admin.js` as a general helper, now unused by the swap.
 - **Local dev only:** Chromium cannot launch in WSL2 without `export LD_LIBRARY_PATH=/home/eiziekiel23/.claude/jobs/721a0389/tmp/pwlibs/root/usr/lib/x86_64-linux-gnu` (14 `.so` files extracted in the Chunk 1 spike; `playwright install --with-deps` needs sudo, unavailable). CI is unaffected.
 
 ---
@@ -291,11 +309,16 @@
 
 **Tonight's automatic live full-cycle run — no action needed.** `monitor.yml` already runs on GitHub's native
 15-minute schedule (`7,22,37,52 * * * *`) and calls `node src/giveaway/swap.js` as the self-healing fallback. The
-first tick after **02:00 America/Chicago** will find the gate open, promote the operator's already-staged
-**Oct 12** values into the live entry, clear staging via `values: {}`, write the stamp, and send a Telegram
-success alert. This is a genuine full-cycle run on real data and does **not** depend on cron-job.org. **What to
-check tomorrow:** (1) a Telegram swap-success alert arrived; (2) the live giveaway shows the Oct 12 values;
-(3) the staging entry is empty; (4) `state/giveaway-swap-date.txt` was bot-committed with `2026-10-12`.
+first tick after **02:00 America/Chicago** will find the gate open, promote the operator's staged values into the
+live entry, write the stamp, and send a Telegram success alert. This is a genuine full-cycle run on real data and
+does **not** depend on cron-job.org. **What to check the next morning:** (1) a Telegram swap-success alert
+arrived; (2) the live giveaway shows the newly staged values; (3) **the staging entry still holds those same
+values** (retention, changed 2026-10-13 — an empty staging entry would now be a bug); (4)
+`state/giveaway-swap-date.txt` was bot-committed with that day's Central date.
+
+**⚠️ Verification still outstanding.** The overnight runs of 2026-10-12 and 2026-10-13 were never reported back,
+so Chunk 11.3's live full-cycle confirmation remains unverified. Worth checking the actual GitHub Actions run
+history and the Telegram log. Note the old expectation "staging entry is empty" no longer applies.
 
 **User-side security housekeeping (pending, non-blocking):** rotate the GitHub fine-grained PAT and the
 cron-job.org API key — both appeared in earlier session transcripts and were used to create the job. Action is

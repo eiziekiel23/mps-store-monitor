@@ -90,7 +90,7 @@ describe('giveaway/swap.js - runGiveawaySwap', () => {
     );
   });
 
-  test('swaps and clears when gate open and fields staged', async () => {
+  test('swaps when gate open and fields staged, leaves staging intact', async () => {
     const fetcher = makeFetcher([
       // Query 1: fetch upcoming entry (has end_date and timer_copy staged)
       {
@@ -127,7 +127,7 @@ describe('giveaway/swap.js - runGiveawaySwap', () => {
           }
         }
       },
-      // Mutation 1: promote staged fields to live
+      // Mutation: promote staged fields to live (no clear follows — staging is left intact)
       {
         json: {
           data: {
@@ -140,21 +140,6 @@ describe('giveaway/swap.js - runGiveawaySwap', () => {
                   { key: 'flash_giveaway_timer_copy', value: 'Last chance!' },
                   { key: 'monthly_field', value: 'Monthly value' }
                 ]
-              },
-              userErrors: []
-            }
-          }
-        }
-      },
-      // Mutation 2: clear staged fields on upcoming
-      {
-        json: {
-          data: {
-            metaobjectUpdate: {
-              metaobject: {
-                id: 'gid://shopify/Metaobject/upcoming',
-                handle: 'upcoming-flash-giveaway',
-                fields: [] // All cleared
               },
               userErrors: []
             }
@@ -374,10 +359,11 @@ describe('giveaway/swap.js - runGiveawaySwap', () => {
   // the stamp write even though the live giveaway had updated correctly.
   //
   // These tests assert on the request PAYLOADS rather than the return value, so
-  // the two write modes can't be swapped or regressed silently:
+  // the write mode can't be accidentally regressed. As of 2026-10-13 the staging
+  // entry is left intact after a swap, so only one mutation should occur:
   //   - live entry  → `fields` (sparse: must not touch the 19 monthly fields)
-  //   - staging entry → `values: {}` (full replacement: clears all 8 daily fields)
-  test('uses sparse `fields` for live promote and `values: {}` to clear staging', async () => {
+  //   - staging entry → NO write (values retained as a persistent template)
+  test('uses sparse `fields` for live promote and does NOT write staging', async () => {
     const requests = [];
     const responses = [
       // Query 1: upcoming entry, two fields staged
@@ -409,24 +395,11 @@ describe('giveaway/swap.js - runGiveawaySwap', () => {
           }
         }
       },
-      // Mutation 1: promote to live
+      // Mutation: promote to live (only mutation — staging is NOT cleared)
       {
         data: {
           metaobjectUpdate: {
             metaobject: { id: 'gid://shopify/Metaobject/live', handle: 'mps-giveaway', fields: [] },
-            userErrors: []
-          }
-        }
-      },
-      // Mutation 2: clear staging
-      {
-        data: {
-          metaobjectUpdate: {
-            metaobject: {
-              id: 'gid://shopify/Metaobject/upcoming',
-              handle: 'upcoming-flash-giveaway',
-              fields: []
-            },
             userErrors: []
           }
         }
@@ -448,10 +421,9 @@ describe('giveaway/swap.js - runGiveawaySwap', () => {
     });
 
     assert.equal(result.ran, true);
-    assert.equal(requests.length, 4, 'expected 2 reads + 2 mutations');
+    assert.equal(requests.length, 3, 'expected 2 reads + 1 mutation (no staging clear)');
 
     const promote = requests[2].variables;
-    const clear = requests[3].variables;
 
     // Promote targets the LIVE entry with a sparse `fields` write.
     assert.equal(promote.id, 'gid://shopify/Metaobject/live');
@@ -466,13 +438,15 @@ describe('giveaway/swap.js - runGiveawaySwap', () => {
       { key: 'pdp_images', value: '["gid://shopify/MediaImage/1"]' }
     ]);
 
-    // Clear targets the STAGING entry with a full `values: {}` replacement.
-    assert.equal(clear.id, 'gid://shopify/Metaobject/upcoming');
-    assert.deepEqual(clear.metaobject.values, {}, 'clear must use `values: {}`');
+    // Staging must NOT be written: no request should target the upcoming GID.
+    const stagingWrite = requests.find(
+      (r) => r.variables?.id === 'gid://shopify/Metaobject/upcoming'
+        && r.variables?.metaobject != null
+    );
     assert.equal(
-      clear.metaobject.fields,
+      stagingWrite,
       undefined,
-      '`values` and `fields` are mutually exclusive in MetaobjectUpdateInput'
+      'staging entry must not be written — values are retained as a persistent template'
     );
 
     // The specific regression: no null value may ever be sent on a `fields` write.
