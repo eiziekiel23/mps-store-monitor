@@ -61,6 +61,16 @@ jobs:
           key: incident-state-v1-${{ github.run_id }}
           restore-keys: incident-state-v1-
 
+      - name: Restore git-tracked swap state (override cache)
+        # After cache restore, re-checkout swap-stamp and snapshot from git to
+        # ensure the authoritative committed values always win over a stale cache
+        # entry. These files are both git-tracked AND in the cache path, so a
+        # prior run's cached snapshot can silently overwrite a swap's committed
+        # stamp before the "Commit" step bundles them into the same regression
+        # commit. See: https://github.com/eiziekiel23/mps-store-monitor/issues/cache-clobber
+        run: |
+          git checkout -- state/giveaway-swap-date.txt state/giveaway-snapshot.json 2>/dev/null || true
+
       - name: Run monitoring tests
         env:
           SHOPIFY_STOREFRONT_TOKEN: ${{ secrets.SHOPIFY_STOREFRONT_TOKEN }}
