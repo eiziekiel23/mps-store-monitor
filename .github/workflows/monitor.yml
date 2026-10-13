@@ -7,8 +7,7 @@ on:
     # from every 15 minutes on 2026-10-13 at operator request). Ticks land at
     # 00:07/08:07/16:07 UTC — 08:07 UTC is the first tick after the giveaway
     # swap's 01:55 America/Chicago gate opens in BOTH DST states (06:55 UTC
-    # during CDT, 07:55 UTC during CST), so the fallback swap below still
-    # catches a missed dedicated run within minutes rather than hours. The
+    # during CDT, 07:55 UTC during CST). The
     # status digest is gated to once per clock hour in src/report.js (see
     # HOURLY_STATUS_STAMP_PATH) — at this cadence no two ticks ever share a
     # UTC hour, so that gate is now a no-op safety net rather than load-bearing.
@@ -61,16 +60,6 @@ jobs:
           key: incident-state-v1-${{ github.run_id }}
           restore-keys: incident-state-v1-
 
-      - name: Restore git-tracked swap state (override cache)
-        # After cache restore, re-checkout swap-stamp and snapshot from git to
-        # ensure the authoritative committed values always win over a stale cache
-        # entry. These files are both git-tracked AND in the cache path, so a
-        # prior run's cached snapshot can silently overwrite a swap's committed
-        # stamp before the "Commit" step bundles them into the same regression
-        # commit. See: https://github.com/eiziekiel23/mps-store-monitor/issues/cache-clobber
-        run: |
-          git checkout -- state/giveaway-swap-date.txt state/giveaway-snapshot.json 2>/dev/null || true
-
       - name: Run monitoring tests
         env:
           SHOPIFY_STOREFRONT_TOKEN: ${{ secrets.SHOPIFY_STOREFRONT_TOKEN }}
@@ -82,26 +71,6 @@ jobs:
         env:
           SHOPIFY_STOREFRONT_TOKEN: ${{ secrets.SHOPIFY_STOREFRONT_TOKEN }}
         run: node src/giveaway/check.js
-
-      # Self-healing fallback for the dedicated giveaway-swap.yml workflow (which
-      # fires once daily via cron-job.org at 01:55 America/Chicago). If that call
-      # is ever missed, the next monitor tick (at most 8 hours later per the cron
-      # schedule above) still finds the gate open (shouldRunGiveawaySwap in
-      # src/schedule.js) and swaps. With only 3 fallback ticks/day, catching a
-      # missed swap within 8 hours (vs. 15 minutes previously) is a trade-off —
-      # monitor.yml runs less frequently to reduce GitHub cron scheduler load.
-      #
-      # No --alert-if-empty here (unlike giveaway-swap.yml): "nothing staged"
-      # is the normal all-day state once the gate opens — alerting on it here
-      # would spam the entire day. Only the once-daily dedicated workflow sends
-      # that reminder.
-      - name: Giveaway daily swap (fallback)
-        if: always()
-        env:
-          SHOPIFY_ADMIN_API_TOKEN: ${{ secrets.SHOPIFY_ADMIN_API_TOKEN }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: node src/giveaway/swap.js
 
       - name: Process results and send alerts
         if: always()
@@ -122,17 +91,19 @@ jobs:
           path: state/
           key: incident-state-v1-${{ github.run_id }}
 
-      - name: Commit giveaway changelog & swap stamp
+      - name: Commit giveaway changelog
         if: always()
         run: |
-          # The giveaway snapshot, changelog, and swap stamp are persisted in git
-          # (not just the run-to-run cache) so the field-change history survives,
-          # is reviewable, and both this workflow and giveaway-swap.yml can share
-          # one authoritative swap timestamp. Only these three paths are committed;
-          # incident state lives in the Actions cache.
+          # The giveaway snapshot and changelog are persisted in git (not just the
+          # run-to-run cache) so the field-change history survives and is reviewable.
+          # The swap stamp is NOT committed here — monitor.yml no longer runs the
+          # swap (removed 2026-10-13, see STATE.md); only the dedicated
+          # giveaway-swap.yml workflow writes and commits that stamp now.
+          # Only these two paths are committed; incident state lives in the
+          # Actions cache.
           git config user.name "mps-store-monitor[bot]"
           git config user.email "mps-store-monitor@users.noreply.github.com"
-          git add state/giveaway-snapshot.json state/giveaway-swap-date.txt CHANGELOG-giveaways.md
+          git add state/giveaway-snapshot.json CHANGELOG-giveaways.md
           if git diff --cached --quiet; then
             echo "No giveaway changes to commit."
           else
